@@ -28,7 +28,12 @@ public class PathDrawingView extends View {
     private final Paint startPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint endPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint pointPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    // Cached drawing dimensions for 60fps rendering without repeated dpToPx conversions
+    private float cachedGridSize = 0f;
+    private float cachedMarkerRadius = 0f;
+    private float cachedLabelOffset = 0f;
+    private float cachedMinMoveDist = 0f;
 
     private final Path drawPath = new Path();
     private final List<PointF> rawPoints = new ArrayList<>();
@@ -56,6 +61,12 @@ public class PathDrawingView extends View {
     }
 
     private void init() {
+        // Pre-compute density dimensions
+        cachedGridSize = dpToPx(32);
+        cachedMarkerRadius = dpToPx(10);
+        cachedLabelOffset = cachedMarkerRadius + dpToPx(4);
+        cachedMinMoveDist = dpToPx(8);
+
         // Path paint (Electric Tech Blue)
         pathPaint.setColor(Color.parseColor("#2563EB"));
         pathPaint.setStyle(Paint.Style.STROKE);
@@ -82,10 +93,6 @@ public class PathDrawingView extends View {
         textPaint.setTextSize(dpToPx(11f));
         textPaint.setFakeBoldText(true);
         textPaint.setTextAlign(Paint.Align.CENTER);
-
-        // Waypoints
-        pointPaint.setColor(Color.parseColor("#D97706"));
-        pointPaint.setStyle(Paint.Style.FILL);
     }
 
     public void setPathListener(PathListener listener) {
@@ -112,12 +119,11 @@ public class PathDrawingView extends View {
         int width = getWidth();
         int height = getHeight();
 
-        // Draw background grid lines
-        float gridSize = dpToPx(32);
-        for (float x = gridSize; x < width; x += gridSize) {
+        // Draw background grid lines using cached step
+        for (float x = cachedGridSize; x < width; x += cachedGridSize) {
             canvas.drawLine(x, 0, x, height, gridPaint);
         }
-        for (float y = gridSize; y < height; y += gridSize) {
+        for (float y = cachedGridSize; y < height; y += cachedGridSize) {
             canvas.drawLine(0, y, width, y, gridPaint);
         }
 
@@ -127,14 +133,13 @@ public class PathDrawingView extends View {
         // Draw start and end markers
         if (!rawPoints.isEmpty()) {
             PointF start = rawPoints.get(0);
-            float radius = dpToPx(10);
-            canvas.drawCircle(start.x, start.y, radius, startPaint);
-            canvas.drawText("START", start.x, start.y - radius - dpToPx(4), textPaint);
+            canvas.drawCircle(start.x, start.y, cachedMarkerRadius, startPaint);
+            canvas.drawText("START", start.x, start.y - cachedLabelOffset, textPaint);
 
             if (rawPoints.size() > 1) {
                 PointF end = rawPoints.get(rawPoints.size() - 1);
-                canvas.drawCircle(end.x, end.y, radius, endPaint);
-                canvas.drawText("END", end.x, end.y - radius - dpToPx(4), textPaint);
+                canvas.drawCircle(end.x, end.y, cachedMarkerRadius, endPaint);
+                canvas.drawText("END", end.x, end.y - cachedLabelOffset, textPaint);
             }
         }
     }
@@ -157,7 +162,7 @@ public class PathDrawingView extends View {
                 if (!rawPoints.isEmpty()) {
                     PointF last = rawPoints.get(rawPoints.size() - 1);
                     float dist = (float) Math.hypot(x - last.x, y - last.y);
-                    if (dist >= dpToPx(8)) {
+                    if (dist >= cachedMinMoveDist) {
                         drawPath.lineTo(x, y);
                         rawPoints.add(new PointF(x, y));
                         invalidate();

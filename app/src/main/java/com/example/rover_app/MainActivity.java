@@ -87,6 +87,14 @@ public class MainActivity extends AppCompatActivity {
     private static final UUID BLE_NRF_CHAR_WRITE = UUID.fromString("6E400002-B5A3-F393-E0A9-E50E24DCCA9E");
     private static final UUID BLE_NRF_CHAR_READ  = UUID.fromString("6E400003-B5A3-F393-E0A9-E50E24DCCA9E");
 
+    // Pre-compiled telemetry distance detection pattern
+    private static final Pattern TELEMETRY_DIST_PATTERN =
+            Pattern.compile("(?i)(?:dist(?:ance)?|d)?[\\s:=]*(\\d{1,3})\\s*(?:cm)?");
+
+    // Rolling terminal buffer caps to prevent memory bloat during prolonged telemetry streams
+    private static final int MAX_TERMINAL_CHARS = 20000;
+    private static final int TRIM_TARGET_CHARS = 14000;
+
     // Colors
     private static final int COLOR_RX = Color.parseColor("#4ADE80");     // Bright Green for incoming data
     private static final int COLOR_TX = Color.parseColor("#FBBF24");     // Amber/Yellow for sent data
@@ -980,10 +988,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void disconnect() {
-        disconnect(true);
-    }
-
     @SuppressLint("MissingPermission")
     private void disconnect(boolean isUserRequested) {
         if (!connected && !pendingConnect) return;
@@ -1040,8 +1044,22 @@ public class MainActivity extends AppCompatActivity {
     /*
      * UI & Terminal Output Helpers
      */
+    private void trimTextViewIfNeeded(TextView tv) {
+        if (tv == null) return;
+        CharSequence cs = tv.getText();
+        if (cs != null && cs.length() > MAX_TERMINAL_CHARS) {
+            int cutIndex = cs.length() - TRIM_TARGET_CHARS;
+            int nextNewline = cs.toString().indexOf('\n', cutIndex);
+            if (nextNewline != -1 && nextNewline < cs.length()) {
+                cutIndex = nextNewline + 1;
+            }
+            tv.setText(cs.subSequence(cutIndex, cs.length()));
+        }
+    }
+
     private void appendRawRx(String text) {
         // 1. Stream to global terminal console
+        trimTextViewIfNeeded(tvTerminal);
         SpannableString span = new SpannableString(text);
         span.setSpan(new ForegroundColorSpan(COLOR_RX), 0, text.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
         tvTerminal.append(span);
@@ -1049,6 +1067,7 @@ public class MainActivity extends AppCompatActivity {
 
         // 2. Stream to Obstacle Avoidance screen live data window
         if (tvObstacleTerminal != null) {
+            trimTextViewIfNeeded(tvObstacleTerminal);
             SpannableString obsSpan = new SpannableString(text);
             obsSpan.setSpan(new ForegroundColorSpan(COLOR_RX), 0, text.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             tvObstacleTerminal.append(obsSpan);
@@ -1064,6 +1083,11 @@ public class MainActivity extends AppCompatActivity {
     private void parseArduinoTelemetry(String text) {
         if (text == null) return;
         rxLineBuffer.append(text);
+
+        // Guard against unbounded buffer growth if corrupted packets lack newlines
+        if (rxLineBuffer.length() > 4096) {
+            rxLineBuffer.delete(0, rxLineBuffer.length() - 1024);
+        }
 
         int newlineIdx;
         while ((newlineIdx = rxLineBuffer.indexOf("\n")) != -1) {
@@ -1157,7 +1181,7 @@ public class MainActivity extends AppCompatActivity {
 
         // Live Distance Telemetry Detection (e.g., "DIST: 14", "D: 25", "18cm", etc.)
         try {
-            Matcher m = Pattern.compile("(?i)(?:dist(?:ance)?|d)?[\\s:=]*(\\d{1,3})\\s*(?:cm)?").matcher(line);
+            Matcher m = TELEMETRY_DIST_PATTERN.matcher(line);
             if (m.find()) {
                 String numStr = m.group(1);
                 if (numStr != null) {
@@ -1173,6 +1197,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void appendTx(String text) {
+        trimTextViewIfNeeded(tvTerminal);
         String line = "\n> " + text + "\n";
         SpannableString span = new SpannableString(line);
         span.setSpan(new ForegroundColorSpan(COLOR_TX), 0, line.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -1180,6 +1205,7 @@ public class MainActivity extends AppCompatActivity {
         scrollToBottom();
 
         if (tvObstacleTerminal != null && currentMode == RoverMode.OBSTACLE) {
+            trimTextViewIfNeeded(tvObstacleTerminal);
             SpannableString obsSpan = new SpannableString(line);
             obsSpan.setSpan(new ForegroundColorSpan(COLOR_TX), 0, line.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             tvObstacleTerminal.append(obsSpan);
@@ -1190,6 +1216,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void appendStatus(String text) {
+        trimTextViewIfNeeded(tvTerminal);
         String timestamp = timeFormat.format(new Date());
         String line = "[" + timestamp + "] " + text + "\n";
         SpannableString span = new SpannableString(line);
@@ -1198,6 +1225,7 @@ public class MainActivity extends AppCompatActivity {
         scrollToBottom();
 
         if (tvObstacleTerminal != null && currentMode == RoverMode.OBSTACLE) {
+            trimTextViewIfNeeded(tvObstacleTerminal);
             SpannableString obsSpan = new SpannableString(line);
             obsSpan.setSpan(new ForegroundColorSpan(COLOR_STATUS), 0, line.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             tvObstacleTerminal.append(obsSpan);
@@ -1208,6 +1236,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void appendError(String text) {
+        trimTextViewIfNeeded(tvTerminal);
         String timestamp = timeFormat.format(new Date());
         String line = "[" + timestamp + "] " + text + "\n";
         SpannableString span = new SpannableString(line);
@@ -1216,6 +1245,7 @@ public class MainActivity extends AppCompatActivity {
         scrollToBottom();
 
         if (tvObstacleTerminal != null && currentMode == RoverMode.OBSTACLE) {
+            trimTextViewIfNeeded(tvObstacleTerminal);
             SpannableString obsSpan = new SpannableString(line);
             obsSpan.setSpan(new ForegroundColorSpan(COLOR_ERROR), 0, line.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             tvObstacleTerminal.append(obsSpan);
