@@ -77,7 +77,7 @@ All commands are transmitted over Bluetooth Classic SPP terminated with `\n` (LF
 ## 🛠️ Software Setup & Installation
 
 ### 1. Arduino Firmware
-1. Open [`arduino_rover_fixed.ino`](arduino_rover_fixed.ino) in the Arduino IDE.
+1. Open [`ardunio_code/all_in_one_rover/all_in_one_rover.ino`](ardunio_code/all_in_one_rover/all_in_one_rover.ino) in the Arduino IDE.
 2. Install the **Servo** library (built-in) and **SoftwareSerial** library (built-in).
 3. Select board **Arduino Uno** and your corresponding COM port.
 4. Upload the sketch to the Arduino Uno.
@@ -119,7 +119,9 @@ All commands are transmitted over Bluetooth Classic SPP terminated with `\n` (LF
 │   │   │       └── themes.xml           # Light window system bars & styles
 │   │   └── AndroidManifest.xml          # Bluetooth & Bluetooth Connect runtime permissions
 │   └── build.gradle.kts
-├── arduino_rover_fixed.ino              # Arduino Uno firmware with smart non-blocking delays
+├── ardunio_code/
+│   └── all_in_one_rover/
+│       └── all_in_one_rover.ino         # Arduino Uno firmware sketch
 ├── .gitignore                           # Excludes Gradle cache, build files, and local properties
 ├── build.gradle.kts
 ├── settings.gradle.kts
