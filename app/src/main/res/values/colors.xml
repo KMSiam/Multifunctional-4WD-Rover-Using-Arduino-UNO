@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#3B82F6</color>
+    <color name="purple_500">#2563EB</color>
+    <color name="purple_700">#1D4ED8</color>
+    <color name="teal_200">#0D9488</color>
+    <color name="teal_700">#047857</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- App Theme Palette (Light Aerospace / Technical Ground Station) -->
+    <color name="background">#F1F5F9</color>
+    <color name="card_bg">#FFFFFF</color>
+    <color name="header_bg">#FFFFFF</color>
+    <color name="border">#CBD5E1</color>
+    <color name="border_focus">#2563EB</color>
+
+    <!-- Brand Accents -->
+    <color name="primary">#2563EB</color>
+    <color name="primary_dark">#1D4ED8</color>
+    <color name="accent">#0284C7</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="danger">#DC2626</color>
+    <color name="warning">#D97706</color>
+
+    <!-- Status indicator colors (High contrast light badges) -->
+    <color name="status_connected">#059669</color>
+    <color name="status_connected_bg">#D1FAE5</color>
+    <color name="status_connecting">#D97706</color>
+    <color name="status_connecting_bg">#FEF3C7</color>
+    <color name="status_disconnected">#DC2626</color>
+    <color name="status_disconnected_bg">#FEE2E2</color>
+
+    <!-- Terminal HUD & Telemetry Screen -->
+    <color name="terminal_bg">#090D16</color>
+    <color name="terminal_text">#38BDF8</color>
+    <color name="terminal_log_tx">#F59E0B</color>
+    <color name="terminal_log_rx">#10B981</color>
+    <color name="terminal_log_info">#94A3B8</color>
+
+    <!-- Macro / D-Pad Buttons (Machined Aluminum Light Tactile Keys) -->
+    <color name="macro_bg">#F8FAFC</color>
+    <color name="macro_border">#CBD5E1</color>
+    <color name="macro_text">#0F172A</color>
+    <color name="macro_test_bg">#059669</color>
+    <color name="macro_stop_bg">#DC2626</color>
+
+    <!-- Input Bar -->
+    <color name="input_bg">#F8FAFC</color>
+    <color name="input_border">#CBD5E1</color>
+
+    <!-- Typography (Slate Scale) -->
+    <color name="text_primary">#0F172A</color>
+    <color name="text_secondary">#475569</color>
+    <color name="text_muted">#64748B</color>
+</resources>

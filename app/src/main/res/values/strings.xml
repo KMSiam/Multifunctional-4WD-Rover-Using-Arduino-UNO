@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Rover BT Tester</string>
+    <string name="bluetooth_header">Bluetooth Classic (HC-05)</string>
+    <string name="status_label">Connection Status:</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_connected">Connected</string>
+    <string name="paired_devices_title">Select Paired Device</string>
+    <string name="btn_refresh">Refresh</string>
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_send_test">Send "TEST"</string>
+    <string name="btn_send">Send</string>
+    <string name="btn_clear_log">Clear Log</string>
+    <string name="append_newline">Append \\n (Newline)</string>
+    <string name="custom_cmd_hint">Enter command (e.g. STOP, F, 1)</string>
+    <string name="received_messages_title">Serial Monitor (Live RX/TX)</string>
+    <string name="no_devices_found">No paired devices found. Pair HC-05 in Phone Settings first.</string>
+</resources>
