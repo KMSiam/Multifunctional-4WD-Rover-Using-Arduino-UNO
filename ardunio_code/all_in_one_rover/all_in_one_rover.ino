@@ -1,45 +1,30 @@
 #include <Servo.h>
 #include <SoftwareSerial.h>
 
-// ==========================================
-// HC-05 Bluetooth Classic Pin Configuration
-// ==========================================
-const int BT_RX = 2; // Connect to HC-05 TX
-const int BT_TX = 3; // Connect to HC-05 RX (through 1k/2k voltage divider recommended)
+const int BT_RX = 2;
+const int BT_TX = 3;
 SoftwareSerial BT(BT_RX, BT_TX);
 
-// ==========================================
-// L298N Dual H-Bridge Motor Driver Pins
-// ==========================================
-const int ENA = 11; // Left Motor Speed (PWM)
-const int IN1 = 9;  // Left Motor Direction 1
-const int IN2 = 8;  // Left Motor Direction 2
-const int IN3 = 7;  // Right Motor Direction 1
-const int IN4 = 6;  // Right Motor Direction 2
-const int ENB = 5;  // Right Motor Speed (PWM)
+const int ENA = 11;
+const int IN1 = 9;
+const int IN2 = 8;
+const int IN3 = 7;
+const int IN4 = 6;
+const int ENB = 5;
 
-// ==========================================
-// HC-SR04 Ultrasonic Distance Sensor Pins
-// ==========================================
 const int TRIG = A3;
 const int ECHO = A2;
 
-// ==========================================
-// SG90 Servo Pin
-// ==========================================
 const int SERVO_PIN = A4;
 Servo servo;
 
-// ==========================================
-// Rover Operating States & Settings
-// ==========================================
 enum Mode { MANUAL, OBSTACLE, PATH };
 Mode mode = MANUAL;
 
 int leftSpeed = 120;
 int rightSpeed = 120;
 
-const int SAFE_DISTANCE = 15; // Centimeters threshold
+const int SAFE_DISTANCE = 15;
 
 const int CENTER = 90;
 const int LEFT_ANGLE = 150;
@@ -50,7 +35,6 @@ const unsigned long MANUAL_MOVE_TIME = 500;
 void setup() {
   Serial.begin(9600);
   BT.begin(9600);
-  // CRITICAL: Reduce SoftwareSerial timeout from default 1000ms to 30ms for zero lag!
   BT.setTimeout(30);
 
   pinMode(ENA, OUTPUT);
@@ -73,7 +57,6 @@ void setup() {
 }
 
 void loop() {
-  // Check for incoming Bluetooth commands
   if (BT.available()) {
     String cmd = BT.readStringUntil('\n');
     cmd.trim();
@@ -83,17 +66,11 @@ void loop() {
     }
   }
 
-  // Execute active mode
   if (mode == OBSTACLE) {
     obstacleMode();
   }
 }
 
-// ==========================================
-// Non-Blocking Smart Delay Helper
-// Checks BT commands while waiting so Emergency
-// STOP and Mode Switches respond in < 5ms!
-// ==========================================
 bool smartDelay(unsigned long ms) {
   unsigned long start = millis();
   while (millis() - start < ms) {
@@ -102,7 +79,6 @@ bool smartDelay(unsigned long ms) {
       cmd.trim();
       if (cmd.length() > 0) {
         handleCommand(cmd);
-        // If mode changed away from OBSTACLE, abort immediately
         if (mode != OBSTACLE) {
           stopMotors();
           return false;
@@ -113,11 +89,7 @@ bool smartDelay(unsigned long ms) {
   return true;
 }
 
-// ==========================================
-// Bluetooth Command Handler
-// ==========================================
 void handleCommand(String cmd) {
-  // Mode selection
   if (cmd == "M") {
     mode = MANUAL;
     stopMotors();
@@ -142,8 +114,6 @@ void handleCommand(String cmd) {
     return;
   }
 
-  // CRITICAL FIX: Immediate emergency stop MUST switch mode to MANUAL
-  // so that obstacleMode() in loop() does not immediately resume driving!
   if (cmd == "S") {
     mode = MANUAL;
     stopMotors();
@@ -153,7 +123,6 @@ void handleCommand(String cmd) {
     return;
   }
 
-  // Set speed (V:0 to V:255)
   if (cmd.startsWith("V:")) {
     int speed = cmd.substring(2).toInt();
     if (speed >= 0 && speed <= 255) {
@@ -165,7 +134,6 @@ void handleCommand(String cmd) {
     return;
   }
 
-  // Set separate left/right speed (e.g. L:100,R:120)
   if (cmd.startsWith("L:")) {
     int comma = cmd.indexOf(',');
     if (comma > 0) {
@@ -185,7 +153,6 @@ void handleCommand(String cmd) {
     return;
   }
 
-  // Manual Control Mode (500ms pulses with abortable wait)
   if (mode == MANUAL) {
     if (cmd == "F") {
       forward();
@@ -211,15 +178,11 @@ void handleCommand(String cmd) {
     return;
   }
 
-  // Path mode
   if (mode == PATH) {
     executePath(cmd);
   }
 }
 
-// ==========================================
-// Motor Control Functions
-// ==========================================
 void setMotors(int a, int b, int c, int d) {
   digitalWrite(IN1, a);
   digitalWrite(IN2, b);
@@ -245,9 +208,6 @@ void stopMotors() {
   analogWrite(ENB, 0);
 }
 
-// ==========================================
-// Ultrasonic Distance Measurement
-// ==========================================
 long distanceCM() {
   digitalWrite(TRIG, LOW);
   delayMicroseconds(2);
@@ -256,7 +216,7 @@ long distanceCM() {
   delayMicroseconds(10);
   digitalWrite(TRIG, LOW);
 
-  long duration = pulseIn(ECHO, HIGH, 25000); // 25ms timeout (~4.2m)
+  long duration = pulseIn(ECHO, HIGH, 25000);
 
   if (duration == 0)
     return 400;
@@ -264,39 +224,31 @@ long distanceCM() {
   return duration * 0.0343 / 2;
 }
 
-// ==========================================
-// Autonomous Obstacle Avoidance (Non-Blocking)
-// ==========================================
 void obstacleMode() {
   long dist = distanceCM();
   
-  // Stream live distance metric to app screen
   BT.print("DIST:");
   BT.println(dist);
 
   if (dist > SAFE_DISTANCE) {
     forward();
-    if (!smartDelay(100)) return; // Brief move tick, checks BT continually
+    if (!smartDelay(100)) return;
     return;
   }
 
-  // Obstacle detected!
   stopMotors();
   BT.println("OBSTACLE");
 
   if (!smartDelay(200)) return;
 
-  // Scan Left
   servo.write(LEFT_ANGLE);
   if (!smartDelay(400)) return;
   long leftDist = distanceCM();
 
-  // Scan Right
   servo.write(RIGHT_ANGLE);
   if (!smartDelay(400)) return;
   long rightDist = distanceCM();
 
-  // Re-center
   servo.write(CENTER);
   if (!smartDelay(150)) return;
 
@@ -319,9 +271,6 @@ void obstacleMode() {
   stopMotors();
 }
 
-// ==========================================
-// Path Execution Engine (Non-Blocking)
-// ==========================================
 void executePath(String path) {
   int start = 0;
 
@@ -372,7 +321,6 @@ void executeStep(String command) {
     default:  return;
   }
 
-  // Non-blocking step delay: abort immediately if emergency stop arrived
   unsigned long start = millis();
   while (millis() - start < (unsigned long)duration) {
     if (BT.available()) {

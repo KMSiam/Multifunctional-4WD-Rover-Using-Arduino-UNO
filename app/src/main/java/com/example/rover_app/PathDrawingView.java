@@ -29,7 +29,6 @@ public class PathDrawingView extends View {
     private final Paint endPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-    // Cached drawing dimensions for 60fps rendering without repeated dpToPx conversions
     private float cachedGridSize = 0f;
     private float cachedMarkerRadius = 0f;
     private float cachedLabelOffset = 0f;
@@ -61,34 +60,28 @@ public class PathDrawingView extends View {
     }
 
     private void init() {
-        // Pre-compute density dimensions
         cachedGridSize = dpToPx(32);
         cachedMarkerRadius = dpToPx(10);
         cachedLabelOffset = cachedMarkerRadius + dpToPx(4);
         cachedMinMoveDist = dpToPx(8);
 
-        // Path paint (Electric Tech Blue)
         pathPaint.setColor(Color.parseColor("#2563EB"));
         pathPaint.setStyle(Paint.Style.STROKE);
         pathPaint.setStrokeWidth(dpToPx(4.5f));
         pathPaint.setStrokeCap(Paint.Cap.ROUND);
         pathPaint.setStrokeJoin(Paint.Join.ROUND);
 
-        // Grid lines (Crisp Blueprint Slate Grid)
         gridPaint.setColor(Color.parseColor("#CBD5E1"));
         gridPaint.setStyle(Paint.Style.STROKE);
         gridPaint.setStrokeWidth(dpToPx(1f));
         gridPaint.setPathEffect(new DashPathEffect(new float[]{dpToPx(4), dpToPx(4)}, 0));
 
-        // Start point (Emerald Green)
         startPaint.setColor(Color.parseColor("#10B981"));
         startPaint.setStyle(Paint.Style.FILL);
 
-        // End point (Crimson Red)
         endPaint.setColor(Color.parseColor("#EF4444"));
         endPaint.setStyle(Paint.Style.FILL);
 
-        // Text labels (Deep Slate)
         textPaint.setColor(Color.parseColor("#0F172A"));
         textPaint.setTextSize(dpToPx(11f));
         textPaint.setFakeBoldText(true);
@@ -119,7 +112,6 @@ public class PathDrawingView extends View {
         int width = getWidth();
         int height = getHeight();
 
-        // Draw background grid lines using cached step
         for (float x = cachedGridSize; x < width; x += cachedGridSize) {
             canvas.drawLine(x, 0, x, height, gridPaint);
         }
@@ -127,10 +119,8 @@ public class PathDrawingView extends View {
             canvas.drawLine(0, y, width, y, gridPaint);
         }
 
-        // Draw user drawn path
         canvas.drawPath(drawPath, pathPaint);
 
-        // Draw start and end markers
         if (!rawPoints.isEmpty()) {
             PointF start = rawPoints.get(0);
             canvas.drawCircle(start.x, start.y, cachedMarkerRadius, startPaint);
@@ -194,7 +184,6 @@ public class PathDrawingView extends View {
             return "";
         }
 
-        // 1. Resample points with step distance of ~45dp
         float stepDist = dpToPx(45);
         List<PointF> simplified = new ArrayList<>();
         simplified.add(rawPoints.get(0));
@@ -213,7 +202,6 @@ public class PathDrawingView extends View {
             simplified.add(rawPoints.get(rawPoints.size() - 1));
         }
 
-        // Helper step class
         class Step {
             char dir;
             long duration;
@@ -221,7 +209,6 @@ public class PathDrawingView extends View {
         }
         List<Step> stepList = new ArrayList<>();
 
-        // 2. Initial Forward Movement towards first sampled point
         PointF p0 = simplified.get(0);
         PointF p1 = simplified.get(1);
 
@@ -230,7 +217,6 @@ public class PathDrawingView extends View {
         long t0 = calculateForwardTime(d0);
         stepList.add(new Step('F', t0));
 
-        // 3. Process subsequent segments: Turn if needed, then Move Forward
         for (int i = 1; i < simplified.size() - 1; i++) {
             PointF from = simplified.get(i);
             PointF to = simplified.get(i + 1);
@@ -238,11 +224,9 @@ public class PathDrawingView extends View {
             double targetHeading = Math.toDegrees(Math.atan2(to.y - from.y, to.x - from.x));
             double deltaAngle = targetHeading - currentHeading;
 
-            // Normalize deltaAngle to [-180, +180]
             while (deltaAngle > 180) deltaAngle -= 360;
             while (deltaAngle < -180) deltaAngle += 360;
 
-            // Significant turn threshold: 22 degrees
             if (Math.abs(deltaAngle) >= 22) {
                 long turnMs = Math.round(Math.abs(deltaAngle) * (600.0 / 90.0));
                 turnMs = Math.max(250, Math.min(1200, (turnMs / 50) * 50));
@@ -253,7 +237,6 @@ public class PathDrawingView extends View {
             float segmentDist = (float) Math.hypot(to.x - from.x, to.y - from.y);
             if (segmentDist >= dpToPx(12)) {
                 long forwardMs = calculateForwardTime(segmentDist);
-                // Combine consecutive forward segments
                 if (!stepList.isEmpty() && stepList.get(stepList.size() - 1).dir == 'F') {
                     stepList.get(stepList.size() - 1).duration += forwardMs;
                 } else {
@@ -262,7 +245,6 @@ public class PathDrawingView extends View {
             }
         }
 
-        // Build formatted string
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < stepList.size(); i++) {
             Step s = stepList.get(i);
@@ -270,7 +252,6 @@ public class PathDrawingView extends View {
             sb.append(s.dir).append(":").append(s.duration);
         }
 
-        // 4. Always terminate path with Stop command (S)
         if (sb.length() > 0) {
             sb.append(",S");
         } else {
@@ -281,10 +262,8 @@ public class PathDrawingView extends View {
     }
 
     private long calculateForwardTime(float pixelDist) {
-        // ~150px corresponds to ~800ms of forward motion at normal speed
         float msPerPixel = 5.5f;
         long time = Math.round(pixelDist * msPerPixel);
-        // Clamp between 400ms and 2500ms, round to nearest 50ms
         time = Math.max(400, Math.min(2500, (time / 50) * 50));
         return time;
     }

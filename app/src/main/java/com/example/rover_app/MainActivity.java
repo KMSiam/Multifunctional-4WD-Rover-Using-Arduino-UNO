@@ -95,13 +95,11 @@ public class MainActivity extends AppCompatActivity {
     private static final int MAX_TERMINAL_CHARS = 20000;
     private static final int TRIM_TARGET_CHARS = 14000;
 
-    // Colors
-    private static final int COLOR_RX = Color.parseColor("#4ADE80");     // Bright Green for incoming data
-    private static final int COLOR_TX = Color.parseColor("#FBBF24");     // Amber/Yellow for sent data
-    private static final int COLOR_STATUS = Color.parseColor("#38BDF8"); // Sky Blue for connection events
-    private static final int COLOR_ERROR = Color.parseColor("#F87171");  // Coral Red for errors
+    private static final int COLOR_RX = Color.parseColor("#4ADE80");
+    private static final int COLOR_TX = Color.parseColor("#FBBF24");
+    private static final int COLOR_STATUS = Color.parseColor("#38BDF8");
+    private static final int COLOR_ERROR = Color.parseColor("#F87171");
 
-    // Rover Modes
     public enum RoverMode {
         MANUAL,
         OBSTACLE,
@@ -109,7 +107,6 @@ public class MainActivity extends AppCompatActivity {
     }
     private RoverMode currentMode = RoverMode.MANUAL;
 
-    // Top Navigation UI Elements
     private Spinner spinnerPairedDevices;
     private MaterialButton btnRefresh;
     private TextView tvConnectionBadge;
@@ -117,23 +114,19 @@ public class MainActivity extends AppCompatActivity {
     private MaterialButton btnConnectToggle;
     private View bannerDisconnected;
 
-    // Mode Navigation Tabs
     private MaterialButton btnTabManual;
     private MaterialButton btnTabObstacle;
     private MaterialButton btnTabPath;
 
-    // Mode Panels
     private View panelManual;
     private View panelObstacle;
     private View panelPath;
 
-    // Mode 1: Manual Controls
     private TextView tvSpeedValue;
     private SeekBar sbSpeed;
     private MaterialButton btnSpeed80, btnSpeed120, btnSpeed180, btnSpeed255;
     private MaterialButton btnManualFwd, btnManualBack, btnManualLeft, btnManualRight, btnManualStop;
 
-    // Mode 2: Obstacle Avoidance
     private TextView tvObstacleBadge;
     private TextView tvObstacleStatus;
     private TextView tvObstacleSubtext;
@@ -144,12 +137,10 @@ public class MainActivity extends AppCompatActivity {
     private MaterialButton btnObstacleStop;
     private final StringBuilder rxLineBuffer = new StringBuilder();
 
-    // Mode 3: Draw-a-Path
     private PathDrawingView pathDrawingView;
     private TextView tvPathPreview;
     private MaterialButton btnClearPath, btnGeneratePath, btnSendPath, btnPathStop;
 
-    // Collapsible Console
     private View btnToggleConsole;
     private TextView tvConsoleHeader;
     private TextView tvConsoleStatus;
@@ -161,13 +152,11 @@ public class MainActivity extends AppCompatActivity {
     private MaterialButton btnSend;
     private boolean isConsoleExpanded = false;
 
-    // Bluetooth
     private BluetoothAdapter bluetoothAdapter;
     private final List<BluetoothDevice> pairedDevices = new ArrayList<>();
     private final List<String> pairedDisplayNames = new ArrayList<>();
     private ArrayAdapter<String> deviceSpinnerAdapter;
 
-    // Active Connections
     private BluetoothSocket classicSocket;
     private InputStream classicInputStream;
     private OutputStream classicOutputStream;
@@ -201,7 +190,6 @@ public class MainActivity extends AppCompatActivity {
 
     private final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
 
-    // Newline modes (default LF \n for Arduino rover)
     private enum NewlineMode {
         LF("LF (\\n)", "\n"),
         CRLF("CRLF (\\r\\n)", "\r\n"),
@@ -216,7 +204,6 @@ public class MainActivity extends AppCompatActivity {
     }
     private NewlineMode currentNewlineMode = NewlineMode.LF;
 
-    // Broadcast receiver for hardware disconnection
     private final BroadcastReceiver aclDisconnectReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -229,7 +216,6 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
-    // Permission launcher
     private final ActivityResultLauncher<String[]> permissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), result -> {
                 boolean allGranted = true;
@@ -286,7 +272,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initViews() {
-        // Top Bar
         spinnerPairedDevices = findViewById(R.id.spinner_paired_devices);
         btnRefresh = findViewById(R.id.btn_refresh);
         tvConnectionBadge = findViewById(R.id.tv_connection_badge);
@@ -294,17 +279,14 @@ public class MainActivity extends AppCompatActivity {
         btnConnectToggle = findViewById(R.id.btn_connect_toggle);
         bannerDisconnected = findViewById(R.id.banner_disconnected);
 
-        // Mode Tabs
         btnTabManual = findViewById(R.id.btn_tab_manual);
         btnTabObstacle = findViewById(R.id.btn_tab_obstacle);
         btnTabPath = findViewById(R.id.btn_tab_path);
 
-        // Mode Panels
         panelManual = findViewById(R.id.panel_manual);
         panelObstacle = findViewById(R.id.panel_obstacle);
         panelPath = findViewById(R.id.panel_path);
 
-        // Mode 1: Manual
         tvSpeedValue = findViewById(R.id.tv_speed_value);
         sbSpeed = findViewById(R.id.sb_speed);
         btnSpeed80 = findViewById(R.id.btn_speed_80);
@@ -317,7 +299,6 @@ public class MainActivity extends AppCompatActivity {
         btnManualRight = findViewById(R.id.btn_manual_right);
         btnManualStop = findViewById(R.id.btn_manual_stop);
 
-        // Mode 2: Obstacle
         tvObstacleBadge = findViewById(R.id.tv_obstacle_badge);
         tvObstacleStatus = findViewById(R.id.tv_obstacle_status);
         tvObstacleSubtext = findViewById(R.id.tv_obstacle_subtext);
@@ -335,7 +316,6 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
-        // Mode 3: Path
         pathDrawingView = findViewById(R.id.path_drawing_view);
         tvPathPreview = findViewById(R.id.tv_path_preview);
         btnClearPath = findViewById(R.id.btn_clear_path);
@@ -343,7 +323,6 @@ public class MainActivity extends AppCompatActivity {
         btnSendPath = findViewById(R.id.btn_send_path);
         btnPathStop = findViewById(R.id.btn_path_stop);
 
-        // Collapsible Console
         btnToggleConsole = findViewById(R.id.btn_toggle_console);
         tvConsoleHeader = findViewById(R.id.tv_console_header);
         tvConsoleStatus = findViewById(R.id.tv_console_status);
@@ -354,12 +333,10 @@ public class MainActivity extends AppCompatActivity {
         etSendCommand = findViewById(R.id.et_send_command);
         btnSend = findViewById(R.id.btn_send);
 
-        // Setup Device Spinner
         deviceSpinnerAdapter = new ArrayAdapter<>(this, R.layout.item_spinner, pairedDisplayNames);
         deviceSpinnerAdapter.setDropDownViewResource(R.layout.item_spinner_dropdown);
         spinnerPairedDevices.setAdapter(deviceSpinnerAdapter);
 
-        // Newline mode toggle button
         btnNewlineToggle.setText(currentNewlineMode.label);
         btnNewlineToggle.setOnClickListener(v -> {
             if (currentNewlineMode == NewlineMode.LF) {
@@ -379,7 +356,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void setupListeners() {
-        // Device Refresh & Connect Toggle
         btnRefresh.setOnClickListener(v -> refreshPairedDevices());
 
         btnConnectToggle.setOnClickListener(v -> {
@@ -402,19 +378,16 @@ public class MainActivity extends AppCompatActivity {
 
         btnClearLog.setOnClickListener(v -> tvTerminal.setText(""));
 
-        // Mode Switching Tabs
         btnTabManual.setOnClickListener(v -> switchMode(RoverMode.MANUAL));
         btnTabObstacle.setOnClickListener(v -> switchMode(RoverMode.OBSTACLE));
         btnTabPath.setOnClickListener(v -> switchMode(RoverMode.PATH));
 
-        // Mode 1: Manual Controls (Send single 500ms pulse commands)
         btnManualFwd.setOnClickListener(v -> sendRoverCommand("F"));
         btnManualBack.setOnClickListener(v -> sendRoverCommand("B"));
         btnManualLeft.setOnClickListener(v -> sendRoverCommand("L"));
         btnManualRight.setOnClickListener(v -> sendRoverCommand("R"));
         btnManualStop.setOnClickListener(v -> triggerEmergencyStop());
 
-        // Speed Slider
         sbSpeed.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
@@ -430,13 +403,11 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Speed Presets
         btnSpeed80.setOnClickListener(v -> setSpeed(80));
         btnSpeed120.setOnClickListener(v -> setSpeed(120));
         btnSpeed180.setOnClickListener(v -> setSpeed(180));
         btnSpeed255.setOnClickListener(v -> setSpeed(255));
 
-        // Mode 2: Obstacle Avoidance Controls
         if (btnObstacleStart != null) {
             btnObstacleStart.setOnClickListener(v -> {
                 sendRoverCommand("O");
@@ -456,7 +427,6 @@ public class MainActivity extends AppCompatActivity {
 
         btnObstacleStop.setOnClickListener(v -> triggerEmergencyStop());
 
-        // Mode 3: Draw-a-Path Controls
         pathDrawingView.setPathListener(new PathDrawingView.PathListener() {
             @Override
             public void onPathDrawn(String generatedCommand) {
@@ -484,11 +454,9 @@ public class MainActivity extends AppCompatActivity {
         btnSendPath.setOnClickListener(v -> {
             String pathCmd = tvPathPreview.getText().toString().trim();
             if (pathCmd.startsWith("F:") && pathCmd.contains("S")) {
-                // First ensure Arduino is in Path mode
                 sendRoverCommand("P");
 
                 mainHandler.postDelayed(() -> {
-                    // Send sequential differential path string
                     sendRoverCommand(pathCmd);
                     Toast.makeText(this, "Path sent to rover!", Toast.LENGTH_SHORT).show();
                 }, 150);
@@ -499,10 +467,8 @@ public class MainActivity extends AppCompatActivity {
 
         btnPathStop.setOnClickListener(v -> triggerEmergencyStop());
 
-        // Collapsible Console Header Toggle
         btnToggleConsole.setOnClickListener(v -> toggleConsole());
 
-        // Console Send via button
         btnSend.setOnClickListener(v -> {
             String text = etSendCommand.getText().toString();
             if (!TextUtils.isEmpty(text)) {
@@ -511,7 +477,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Console Send via keyboard action
         etSendCommand.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEND) {
                 btnSend.performClick();
@@ -552,7 +517,6 @@ public class MainActivity extends AppCompatActivity {
         updateModeUi(targetMode);
 
         if (wasSameMode) {
-            // Re-assert active mode command (recovery if Arduino missed previous packet)
             switch (targetMode) {
                 case MANUAL:
                     sendRoverCommand("M");
@@ -569,7 +533,6 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // Safety: Always stop motors before switching modes
         sendRoverCommand("S", true);
 
         mainHandler.postDelayed(() -> {
@@ -578,8 +541,6 @@ public class MainActivity extends AppCompatActivity {
                     sendRoverCommand("M");
                     break;
                 case OBSTACLE:
-                    // Safety: DO NOT send 'O' on tab switch!
-                    // Rover stays in safe Standby until the user explicitly taps 'START MODE (O)'.
                     if (tvObstacleStatus != null) {
                         tvObstacleStatus.setText("○ Standby — Tap 'START' to Begin");
                         tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.accent));
@@ -605,7 +566,6 @@ public class MainActivity extends AppCompatActivity {
         int whiteColor = ContextCompat.getColor(this, R.color.white);
         int textSecColor = ContextCompat.getColor(this, R.color.text_secondary);
 
-        // Highlight selected tab
         btnTabManual.setBackgroundTintList(ColorStateList.valueOf(mode == RoverMode.MANUAL ? primaryColor : cardBgColor));
         btnTabManual.setTextColor(mode == RoverMode.MANUAL ? whiteColor : textSecColor);
         btnTabManual.setIconTint(ColorStateList.valueOf(mode == RoverMode.MANUAL ? whiteColor : textSecColor));
@@ -618,7 +578,6 @@ public class MainActivity extends AppCompatActivity {
         btnTabPath.setTextColor(mode == RoverMode.PATH ? whiteColor : textSecColor);
         btnTabPath.setIconTint(ColorStateList.valueOf(mode == RoverMode.PATH ? whiteColor : textSecColor));
 
-        // Show corresponding panel
         panelManual.setVisibility(mode == RoverMode.MANUAL ? View.VISIBLE : View.GONE);
         panelObstacle.setVisibility(mode == RoverMode.OBSTACLE ? View.VISIBLE : View.GONE);
         panelPath.setVisibility(mode == RoverMode.PATH ? View.VISIBLE : View.GONE);
@@ -660,7 +619,6 @@ public class MainActivity extends AppCompatActivity {
         final String payload = cmd.endsWith("\n") ? cmd : (cmd + "\n");
         final byte[] data = payload.getBytes(StandardCharsets.UTF_8);
 
-        // BLE GATT fallback
         if (bleGatt != null && bleWriteChar != null) {
             bleWriteChar.setValue(data);
             bleGatt.writeCharacteristic(bleWriteChar);
@@ -668,7 +626,6 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        // Classic RFCOMM SPP (Primary for HC-05) on single-thread sendExecutor with synchronization
         sendExecutor.execute(() -> {
             synchronized (socketLock) {
                 if (classicOutputStream != null && connected) {
@@ -742,7 +699,6 @@ public class MainActivity extends AppCompatActivity {
                 String addr = device.getAddress();
                 pairedDisplayNames.add(name + " (" + addr + ")");
 
-                // STRICT matching for HC-05
                 String upper = name.toUpperCase(Locale.ROOT);
                 if (upper.contains("HC-05") || upper.equals("HC05") || upper.startsWith("HC-") ||
                         addr.equalsIgnoreCase("D3:34:81:F8:14:BD")) {
@@ -806,7 +762,6 @@ public class MainActivity extends AppCompatActivity {
             boolean success = false;
             Exception connectException = null;
 
-            // Attempt 1: Standard SPP RFCOMM
             try {
                 activeSocket = device.createRfcommSocketToServiceRecord(BLUETOOTH_SPP);
                 activeSocket.connect();
@@ -816,7 +771,6 @@ public class MainActivity extends AppCompatActivity {
                 closeSocketSilently(activeSocket);
                 activeSocket = null;
 
-                // Attempt 2: Insecure SPP fallback
                 try {
                     activeSocket = device.createInsecureRfcommSocketToServiceRecord(BLUETOOTH_SPP);
                     activeSocket.connect();
@@ -826,7 +780,6 @@ public class MainActivity extends AppCompatActivity {
                     closeSocketSilently(activeSocket);
                     activeSocket = null;
 
-                    // Attempt 3: Reflection channel 1 fallback
                     try {
                         Method m = device.getClass().getMethod("createRfcommSocket", int.class);
                         activeSocket = (BluetoothSocket) m.invoke(device, 1);
@@ -856,7 +809,6 @@ public class MainActivity extends AppCompatActivity {
                         updateUiState(ConnectionState.CONNECTED, name);
                         appendStatus("Connected to " + name + " via Classic SPP RFCOMM.");
                         Toast.makeText(MainActivity.this, "✓ Connected to " + name, Toast.LENGTH_SHORT).show();
-                        // Sync rover mode to current UI mode
                         switchMode(currentMode);
                     });
 
@@ -871,7 +823,6 @@ public class MainActivity extends AppCompatActivity {
                     });
                 }
             } else {
-                // If Classic failed, try BLE GATT fallback
                 final String err = (connectException != null ? connectException.getMessage() : "unknown");
                 mainHandler.post(() -> appendStatus("Classic SPP failed (" + err + "). Trying BLE GATT fallback..."));
                 connectBle(device, name);
@@ -1058,14 +1009,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void appendRawRx(String text) {
-        // 1. Stream to global terminal console
         trimTextViewIfNeeded(tvTerminal);
         SpannableString span = new SpannableString(text);
         span.setSpan(new ForegroundColorSpan(COLOR_RX), 0, text.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
         tvTerminal.append(span);
         scrollToBottom();
 
-        // 2. Stream to Obstacle Avoidance screen live data window
         if (tvObstacleTerminal != null) {
             trimTextViewIfNeeded(tvObstacleTerminal);
             SpannableString obsSpan = new SpannableString(text);
@@ -1076,7 +1025,6 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // 3. Parse incoming telemetry events & distance numbers from Arduino
         parseArduinoTelemetry(text);
     }
 
@@ -1084,7 +1032,6 @@ public class MainActivity extends AppCompatActivity {
         if (text == null) return;
         rxLineBuffer.append(text);
 
-        // Guard against unbounded buffer growth if corrupted packets lack newlines
         if (rxLineBuffer.length() > 4096) {
             rxLineBuffer.delete(0, rxLineBuffer.length() - 1024);
         }
@@ -1179,7 +1126,6 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // Live Distance Telemetry Detection (e.g., "DIST: 14", "D: 25", "18cm", etc.)
         try {
             Matcher m = TELEMETRY_DIST_PATTERN.matcher(line);
             if (m.find()) {
@@ -1332,7 +1278,6 @@ public class MainActivity extends AppCompatActivity {
             bannerDisconnected.setVisibility(enabled ? View.GONE : View.VISIBLE);
         }
 
-        // Mode 1: Manual Controls
         if (btnManualFwd != null) btnManualFwd.setEnabled(enabled);
         if (btnManualBack != null) btnManualBack.setEnabled(enabled);
         if (btnManualLeft != null) btnManualLeft.setEnabled(enabled);
@@ -1344,15 +1289,12 @@ public class MainActivity extends AppCompatActivity {
         if (btnSpeed180 != null) btnSpeed180.setEnabled(enabled);
         if (btnSpeed255 != null) btnSpeed255.setEnabled(enabled);
 
-        // Mode 2: Obstacle Controls
         if (btnObstacleStart != null) btnObstacleStart.setEnabled(enabled);
         if (btnObstacleStop != null) btnObstacleStop.setEnabled(enabled);
 
-        // Mode 3: Path Controls
         if (btnSendPath != null) btnSendPath.setEnabled(enabled);
         if (btnPathStop != null) btnPathStop.setEnabled(enabled);
 
-        // Console Send
         if (btnSend != null) btnSend.setEnabled(enabled);
     }
 
