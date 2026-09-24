@@ -12,3 +12,4 @@ app/build/
 .externalNativeBuild
 .cxx
 *.apk
+app/release/
