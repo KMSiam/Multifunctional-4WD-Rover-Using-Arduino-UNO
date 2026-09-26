@@ -10,7 +10,7 @@ Designed with a high-contrast **Light Technical Aerospace Ground Station** inter
 
 ### 🎮 1. Manual Control Mode
 - **Tactile D-Pad Interface**: Ergonomic, responsive forward, backward, left, and right directional control buttons.
-- **Auto-Braking Pulse Logic**: Each directional tap sends a timed 500ms movement pulse followed by auto-braking, preventing runaway rovers.
+- **Continuous Motion with Center Brake**: Directional taps engage continuous driving (Forward, Backward, Left, Right) with instantaneous braking via the prominent central STOP button.
 - **PWM Speed Regulation Slider**: Continuous motor speed modulation from `0` to `255` PWM (`V:<speed>`), with quick-preset chips for **Slow (80)**, **Normal (120)**, **Fast (180)**, and **Max (255)**.
 - **Centralized Emergency Brake**: Instantaneous red stop button executing redundant stop bursts (`S\n`).
 
@@ -61,10 +61,10 @@ All commands are transmitted over Bluetooth Classic SPP terminated with `\n` (LF
 
 | Command | Action | Description |
 |---|---|---|
-| `F` | Forward | Moves rover forward for 500ms, then brakes |
-| `B` | Backward | Moves rover backward for 500ms, then brakes |
-| `L` | Turn Left | Spins rover left for 500ms, then brakes |
-| `R` | Turn Right | Spins rover right for 500ms, then brakes |
+| `F` | Forward | Moves rover forward continuously until STOP or new direction |
+| `B` | Backward | Moves rover backward continuously until STOP or new direction |
+| `L` | Turn Left | Spins rover left continuously until STOP or new direction |
+| `R` | Turn Right | Spins rover right continuously until STOP or new direction |
 | `S` | Emergency Stop | Halts all motors immediately and resets state |
 | `M` | Manual Mode | Sets rover to manual command listening mode |
 | `O` | Obstacle Mode | Activates autonomous ultrasonic obstacle avoidance |

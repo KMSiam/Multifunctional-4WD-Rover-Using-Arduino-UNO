@@ -21,16 +21,14 @@ Servo servo;
 enum Mode { MANUAL, OBSTACLE, PATH };
 Mode mode = MANUAL;
 
-int leftSpeed = 120;
-int rightSpeed = 120;
+int leftSpeed = 160;
+int rightSpeed = 160;
 
 const int SAFE_DISTANCE = 15;
 
 const int CENTER = 90;
 const int LEFT_ANGLE = 150;
 const int RIGHT_ANGLE = 30;
-
-const unsigned long MANUAL_MOVE_TIME = 500;
 
 void setup() {
   Serial.begin(9600);
@@ -54,11 +52,22 @@ void setup() {
 
   BT.println("ROVER_READY");
   BT.println("MODE:MANUAL");
+  Serial.println("ROVER_READY");
+  Serial.println("MODE:MANUAL");
 }
 
 void loop() {
   if (BT.available()) {
     String cmd = BT.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd.length() > 0) {
+      handleCommand(cmd);
+    }
+  }
+
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
     cmd.trim();
 
     if (cmd.length() > 0) {
@@ -85,6 +94,17 @@ bool smartDelay(unsigned long ms) {
         }
       }
     }
+    if (Serial.available()) {
+      String cmd = Serial.readStringUntil('\n');
+      cmd.trim();
+      if (cmd.length() > 0) {
+        handleCommand(cmd);
+        if (mode != OBSTACLE) {
+          stopMotors();
+          return false;
+        }
+      }
+    }
   }
   return true;
 }
@@ -95,6 +115,7 @@ void handleCommand(String cmd) {
     stopMotors();
     servo.write(CENTER);
     BT.println("MODE:MANUAL");
+    Serial.println("MODE:MANUAL");
     return;
   }
 
@@ -103,6 +124,7 @@ void handleCommand(String cmd) {
     stopMotors();
     servo.write(CENTER);
     BT.println("MODE:OBSTACLE");
+    Serial.println("MODE:OBSTACLE");
     return;
   }
 
@@ -111,6 +133,7 @@ void handleCommand(String cmd) {
     stopMotors();
     servo.write(CENTER);
     BT.println("MODE:PATH");
+    Serial.println("MODE:PATH");
     return;
   }
 
@@ -120,6 +143,8 @@ void handleCommand(String cmd) {
     servo.write(CENTER);
     BT.println("STOP");
     BT.println("MODE:MANUAL");
+    Serial.println("STOP");
+    Serial.println("MODE:MANUAL");
     return;
   }
 
@@ -128,8 +153,15 @@ void handleCommand(String cmd) {
     if (speed >= 0 && speed <= 255) {
       leftSpeed = speed;
       rightSpeed = speed;
+      if (digitalRead(IN1) != LOW || digitalRead(IN2) != LOW || 
+          digitalRead(IN3) != LOW || digitalRead(IN4) != LOW) {
+        analogWrite(ENA, leftSpeed);
+        analogWrite(ENB, rightSpeed);
+      }
       BT.print("SPEED:");
       BT.println(speed);
+      Serial.print("SPEED:");
+      Serial.println(speed);
     }
     return;
   }
@@ -143,38 +175,54 @@ void handleCommand(String cmd) {
       if (newLeft >= 0 && newLeft <= 255 && newRight >= 0 && newRight <= 255) {
         leftSpeed = newLeft;
         rightSpeed = newRight;
-
+        if (digitalRead(IN1) != LOW || digitalRead(IN2) != LOW || 
+            digitalRead(IN3) != LOW || digitalRead(IN4) != LOW) {
+          analogWrite(ENA, leftSpeed);
+          analogWrite(ENB, rightSpeed);
+        }
         BT.print("SPEED:L");
         BT.print(leftSpeed);
         BT.print(",R");
         BT.println(rightSpeed);
+        Serial.print("SPEED:L");
+        Serial.print(leftSpeed);
+        Serial.print(",R");
+        Serial.println(rightSpeed);
       }
     }
     return;
   }
 
-  if (mode == MANUAL) {
-    if (cmd == "F") {
-      forward();
-      smartDelay(MANUAL_MOVE_TIME);
-      stopMotors();
-      BT.println("FORWARD_STOP");
-    } else if (cmd == "B") {
-      backward();
-      smartDelay(MANUAL_MOVE_TIME);
-      stopMotors();
-      BT.println("BACKWARD_STOP");
-    } else if (cmd == "L") {
-      turnLeft();
-      smartDelay(MANUAL_MOVE_TIME);
-      stopMotors();
-      BT.println("LEFT_STOP");
-    } else if (cmd == "R") {
-      turnRight();
-      smartDelay(MANUAL_MOVE_TIME);
-      stopMotors();
-      BT.println("RIGHT_STOP");
-    }
+  // Manual driving commands (Continuous drive until another direction or STOP is received)
+  if (cmd == "F") {
+    mode = MANUAL;
+    forward();
+    BT.println("FORWARD");
+    Serial.println("FORWARD");
+    return;
+  }
+
+  if (cmd == "B") {
+    mode = MANUAL;
+    backward();
+    BT.println("BACKWARD");
+    Serial.println("BACKWARD");
+    return;
+  }
+
+  if (cmd == "L") {
+    mode = MANUAL;
+    turnLeft();
+    BT.println("LEFT");
+    Serial.println("LEFT");
+    return;
+  }
+
+  if (cmd == "R") {
+    mode = MANUAL;
+    turnRight();
+    BT.println("RIGHT");
+    Serial.println("RIGHT");
     return;
   }
 
@@ -229,6 +277,8 @@ void obstacleMode() {
   
   BT.print("DIST:");
   BT.println(dist);
+  Serial.print("DIST:");
+  Serial.println(dist);
 
   if (dist > SAFE_DISTANCE) {
     forward();
@@ -238,6 +288,7 @@ void obstacleMode() {
 
   stopMotors();
   BT.println("OBSTACLE");
+  Serial.println("OBSTACLE");
 
   if (!smartDelay(200)) return;
 
@@ -254,14 +305,17 @@ void obstacleMode() {
 
   if (leftDist > SAFE_DISTANCE && leftDist > rightDist) {
     BT.println("TURN_LEFT");
+    Serial.println("TURN_LEFT");
     turnLeft();
     if (!smartDelay(600)) return;
   } else if (rightDist > SAFE_DISTANCE) {
     BT.println("TURN_RIGHT");
+    Serial.println("TURN_RIGHT");
     turnRight();
     if (!smartDelay(600)) return;
   } else {
     BT.println("BOTH_BLOCKED");
+    Serial.println("BOTH_BLOCKED");
     backward();
     if (!smartDelay(500)) return;
     turnRight();
@@ -296,6 +350,7 @@ void executePath(String path) {
   stopMotors();
   if (mode == PATH) {
     BT.println("PATH_COMPLETE");
+    Serial.println("PATH_COMPLETE");
   }
 }
 
@@ -325,6 +380,17 @@ void executeStep(String command) {
   while (millis() - start < (unsigned long)duration) {
     if (BT.available()) {
       String cmd = BT.readStringUntil('\n');
+      cmd.trim();
+      if (cmd.length() > 0) {
+        handleCommand(cmd);
+        if (mode != PATH) {
+          stopMotors();
+          return;
+        }
+      }
+    }
+    if (Serial.available()) {
+      String cmd = Serial.readStringUntil('\n');
       cmd.trim();
       if (cmd.length() > 0) {
         handleCommand(cmd);
