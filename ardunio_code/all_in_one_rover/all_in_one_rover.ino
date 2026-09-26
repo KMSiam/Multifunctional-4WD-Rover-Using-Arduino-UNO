@@ -30,6 +30,12 @@ const int CENTER = 90;
 const int LEFT_ANGLE = 150;
 const int RIGHT_ANGLE = 30;
 
+// Non-blocking 500ms safety auto-brake in Manual mode
+const unsigned long MANUAL_MOVE_TIME = 500;
+unsigned long manualMoveStartTime = 0;
+bool isManualMoving = false;
+String lastManualDirection = "";
+
 void setup() {
   Serial.begin(9600);
   BT.begin(9600);
@@ -75,6 +81,16 @@ void loop() {
     }
   }
 
+  // Non-blocking 500ms safety auto-brake in Manual mode
+  if (mode == MANUAL && isManualMoving) {
+    if (millis() - manualMoveStartTime >= MANUAL_MOVE_TIME) {
+      stopMotors();
+      isManualMoving = false;
+      BT.println(lastManualDirection + "_STOP");
+      Serial.println(lastManualDirection + "_STOP");
+    }
+  }
+
   if (mode == OBSTACLE) {
     obstacleMode();
   }
@@ -112,6 +128,7 @@ bool smartDelay(unsigned long ms) {
 void handleCommand(String cmd) {
   if (cmd == "M") {
     mode = MANUAL;
+    isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
     BT.println("MODE:MANUAL");
@@ -121,6 +138,7 @@ void handleCommand(String cmd) {
 
   if (cmd == "O") {
     mode = OBSTACLE;
+    isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
     BT.println("MODE:OBSTACLE");
@@ -130,6 +148,7 @@ void handleCommand(String cmd) {
 
   if (cmd == "P") {
     mode = PATH;
+    isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
     BT.println("MODE:PATH");
@@ -139,6 +158,7 @@ void handleCommand(String cmd) {
 
   if (cmd == "S") {
     mode = MANUAL;
+    isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
     BT.println("STOP");
@@ -193,10 +213,13 @@ void handleCommand(String cmd) {
     return;
   }
 
-  // Manual driving commands (Continuous drive until another direction or STOP is received)
+  // Manual driving commands (500ms non-blocking safety pulse)
   if (cmd == "F") {
     mode = MANUAL;
     forward();
+    manualMoveStartTime = millis();
+    isManualMoving = true;
+    lastManualDirection = "FORWARD";
     BT.println("FORWARD");
     Serial.println("FORWARD");
     return;
@@ -205,6 +228,9 @@ void handleCommand(String cmd) {
   if (cmd == "B") {
     mode = MANUAL;
     backward();
+    manualMoveStartTime = millis();
+    isManualMoving = true;
+    lastManualDirection = "BACKWARD";
     BT.println("BACKWARD");
     Serial.println("BACKWARD");
     return;
@@ -213,6 +239,9 @@ void handleCommand(String cmd) {
   if (cmd == "L") {
     mode = MANUAL;
     turnLeft();
+    manualMoveStartTime = millis();
+    isManualMoving = true;
+    lastManualDirection = "LEFT";
     BT.println("LEFT");
     Serial.println("LEFT");
     return;
@@ -221,6 +250,9 @@ void handleCommand(String cmd) {
   if (cmd == "R") {
     mode = MANUAL;
     turnRight();
+    manualMoveStartTime = millis();
+    isManualMoving = true;
+    lastManualDirection = "RIGHT";
     BT.println("RIGHT");
     Serial.println("RIGHT");
     return;
@@ -232,10 +264,20 @@ void handleCommand(String cmd) {
 }
 
 void setMotors(int a, int b, int c, int d) {
+  bool wasStopped = (digitalRead(IN1) == LOW && digitalRead(IN2) == LOW && 
+                     digitalRead(IN3) == LOW && digitalRead(IN4) == LOW);
+
   digitalWrite(IN1, a);
   digitalWrite(IN2, b);
   digitalWrite(IN3, c);
   digitalWrite(IN4, d);
+
+  // If starting from standstill, provide a quick 35ms kick-pulse to overcome gearbox stiction
+  if (wasStopped && (leftSpeed < 180 || rightSpeed < 180)) {
+    analogWrite(ENA, (leftSpeed > 210 ? leftSpeed : 210));
+    analogWrite(ENB, (rightSpeed > 210 ? rightSpeed : 210));
+    delay(35);
+  }
 
   analogWrite(ENA, leftSpeed);
   analogWrite(ENB, rightSpeed);
