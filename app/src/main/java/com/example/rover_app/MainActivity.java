@@ -139,6 +139,8 @@ public class MainActivity extends AppCompatActivity {
 
     private PathDrawingView pathDrawingView;
     private TextView tvPathPreview;
+    private TextView tvPathMetrics;
+    private TextView tvPathStatusBadge;
     private MaterialButton btnClearPath, btnGeneratePath, btnSendPath, btnPathStop;
 
     private View btnToggleConsole;
@@ -318,6 +320,8 @@ public class MainActivity extends AppCompatActivity {
 
         pathDrawingView = findViewById(R.id.path_drawing_view);
         tvPathPreview = findViewById(R.id.tv_path_preview);
+        tvPathMetrics = findViewById(R.id.tv_path_metrics);
+        tvPathStatusBadge = findViewById(R.id.tv_path_status_badge);
         btnClearPath = findViewById(R.id.btn_clear_path);
         btnGeneratePath = findViewById(R.id.btn_generate_path);
         btnSendPath = findViewById(R.id.btn_send_path);
@@ -429,13 +433,27 @@ public class MainActivity extends AppCompatActivity {
 
         pathDrawingView.setPathListener(new PathDrawingView.PathListener() {
             @Override
-            public void onPathDrawn(String generatedCommand) {
+            public void onPathDrawn(String generatedCommand, int stepCount, long totalDurationMs) {
                 tvPathPreview.setText(generatedCommand);
+                if (tvPathMetrics != null) {
+                    tvPathMetrics.setText(stepCount + " Steps • Est. " + String.format(Locale.US, "%.1fs", totalDurationMs / 1000.0f));
+                }
+                if (tvPathStatusBadge != null) {
+                    tvPathStatusBadge.setText("READY");
+                    tvPathStatusBadge.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.status_connected));
+                }
             }
 
             @Override
             public void onPathCleared() {
                 tvPathPreview.setText("Draw on canvas above to generate path...");
+                if (tvPathMetrics != null) {
+                    tvPathMetrics.setText("0 Steps • Est. 0.0s");
+                }
+                if (tvPathStatusBadge != null) {
+                    tvPathStatusBadge.setText("STANDBY");
+                    tvPathStatusBadge.setTextColor(ContextCompat.getColor(MainActivity.this, R.color.text_secondary));
+                }
             }
         });
 
@@ -445,6 +463,10 @@ public class MainActivity extends AppCompatActivity {
             if (pathDrawingView.hasPath()) {
                 String cmd = pathDrawingView.generateRoverCommand();
                 tvPathPreview.setText(cmd);
+                if (tvPathStatusBadge != null) {
+                    tvPathStatusBadge.setText("READY");
+                    tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
+                }
                 Toast.makeText(this, "Path generated!", Toast.LENGTH_SHORT).show();
             } else {
                 Toast.makeText(this, "Draw a path on the canvas first", Toast.LENGTH_SHORT).show();
@@ -454,14 +476,22 @@ public class MainActivity extends AppCompatActivity {
         btnSendPath.setOnClickListener(v -> {
             String pathCmd = tvPathPreview.getText().toString().trim();
             if (pathCmd.startsWith("F:") && pathCmd.contains("S")) {
+                if (tvPathStatusBadge != null) {
+                    tvPathStatusBadge.setText("TRANSMITTING");
+                    tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connecting));
+                }
                 sendRoverCommand("P");
 
                 mainHandler.postDelayed(() -> {
                     sendRoverCommand(pathCmd);
-                    Toast.makeText(this, "Path sent to rover!", Toast.LENGTH_SHORT).show();
+                    if (tvPathStatusBadge != null) {
+                        tvPathStatusBadge.setText("EXECUTING");
+                        tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary));
+                    }
+                    Toast.makeText(this, "🚀 Path transmitted to rover!", Toast.LENGTH_SHORT).show();
                 }, 150);
             } else {
-                Toast.makeText(this, "Generate a valid path first", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Draw a valid path on canvas first", Toast.LENGTH_SHORT).show();
             }
         });
 
@@ -502,6 +532,10 @@ public class MainActivity extends AppCompatActivity {
         }
         if (tvObstacleBadge != null && currentMode == RoverMode.OBSTACLE) {
             tvObstacleBadge.setText("STOPPED");
+        }
+        if (tvPathStatusBadge != null && currentMode == RoverMode.PATH) {
+            tvPathStatusBadge.setText("HALTED");
+            tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.danger));
         }
         Toast.makeText(this, "■ EMERGENCY STOP ACTIVATED", Toast.LENGTH_SHORT).show();
     }
@@ -1119,7 +1153,27 @@ public class MainActivity extends AppCompatActivity {
                     tvObstacleBadge.setText("STOPPED");
                 }
             }
+        } else if (upper.startsWith("PATH_STEP:")) {
+            String stepInfo = line.substring(10).trim();
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("STEP: " + stepInfo);
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary));
+            }
         } else if (upper.contains("PATH_COMPLETE")) {
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("COMPLETED");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
+            }
+            Toast.makeText(this, "✅ Path Execution Complete!", Toast.LENGTH_SHORT).show();
+            if (tvPathPreview != null) {
+                tvPathPreview.setText("✅ Path finished executing successfully!");
+            }
+        } else if (upper.startsWith("PATH_OBSTACLE")) {
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("BLOCKED");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.danger));
+            }
+            Toast.makeText(this, "⚠️ Obstacle detected! Rover stopped safely.", Toast.LENGTH_LONG).show();
             Toast.makeText(this, "✓ Path Execution Complete!", Toast.LENGTH_SHORT).show();
             if (tvPathPreview != null) {
                 tvPathPreview.setText("✓ Path finished executing by rover!");

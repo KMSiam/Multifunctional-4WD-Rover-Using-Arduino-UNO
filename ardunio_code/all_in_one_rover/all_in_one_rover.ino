@@ -410,6 +410,12 @@ void executeStep(String command) {
 
   if (duration <= 0) return;
 
+  // Real-time telemetry to app
+  BT.print("PATH_STEP:");
+  BT.println(command);
+  Serial.print("PATH_STEP:");
+  Serial.println(command);
+
   switch (direction) {
     case 'F': forward();   break;
     case 'B': backward();  break;
@@ -419,7 +425,24 @@ void executeStep(String command) {
   }
 
   unsigned long start = millis();
+  unsigned long lastSonarCheck = 0;
+
   while (millis() - start < (unsigned long)duration) {
+    // Collision avoidance safety guard during forward path movement
+    if (direction == 'F' && millis() - lastSonarCheck >= 80) {
+      lastSonarCheck = millis();
+      long dist = distanceCM();
+      if (dist > 0 && dist <= SAFE_DISTANCE) {
+        stopMotors();
+        BT.print("PATH_OBSTACLE:");
+        BT.println(dist);
+        Serial.print("PATH_OBSTACLE:");
+        Serial.println(dist);
+        mode = MANUAL;
+        return;
+      }
+    }
+
     if (BT.available()) {
       String cmd = BT.readStringUntil('\n');
       cmd.trim();
@@ -445,4 +468,5 @@ void executeStep(String command) {
   }
 
   stopMotors();
+  delay(120); // 120ms settling pause between steps to eliminate slip & back-EMF
 }

@@ -20,9 +20,10 @@ Designed with a high-contrast **Light Technical Aerospace Ground Station** inter
 - **Dedicated Live Telemetry Screen**: High-contrast instrument LCD viewport streaming real-time distance measurements, sweep angles, and navigation decisions directly onto the phone screen.
 
 ### ✏️ 3. Draw-a-Path Navigation Mode
-- **Interactive Touch Canvas**: Real-time engineering blueprint drafting board with dashed coordinate grid lines.
-- **Differential-Drive Command Generator**: Converts finger-drawn paths into sequential Arduino differential movement commands (`F:<ms>,R:<ms>,F:<ms>,L:<ms>,S\n`).
-- **Visual Trajectory Markers**: Start (Emerald green), End (Crimson red), and waypoints (Amber) with live command string preview before transmission.
+- **Interactive Bezier Touch Canvas**: Real-time blueprint drafting board with smooth quadratic splines, coordinate grid lines, and Start (Emerald)/Finish (Crimson) markers.
+- **Numbered Waypoint Nodes & Real-Time Metrics**: Visual turn nodes (1, 2, 3...) and dynamic HUD metrics calculating step count and estimated runtime.
+- **Differential-Drive Optimizer**: Generates compact Arduino commands (F:<ms>,R:<ms>,L:<ms>,S\n) capped to fit within SoftwareSerial buffer without truncation.
+- **Ultrasonic Collision Interlock & Step Settling**: Arduino firmware checks distance during forward path motion (halting on obstacles <15cm) with 120ms settling pauses between turns.
 
 ### ⚡ 4. Robust Bluetooth Classic SPP Engine
 - Built specifically for the **HC-05** module using standard RFCOMM SPP UUID (`00001101-0000-1000-8000-00805F9B34FB`) with multi-step socket reflection fallback.
