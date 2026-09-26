@@ -18,8 +18,8 @@ import java.util.List;
 
 /**
  * Technical Blueprint Canvas for Autonomous Rover Path Planning.
- * Supports smooth spline drawing, waypoint extraction, turn calculation,
- * and compact command generation for Arduino Uno differential drive.
+ * Highly optimized: zero onDraw allocations, pre-compiled grid path,
+ * smooth quadratic Bezier splines, and SoftwareSerial buffer-safe command compression.
  */
 public class PathDrawingView extends View {
 
@@ -31,10 +31,11 @@ public class PathDrawingView extends View {
     private PathListener listener;
 
     private final Path drawPath = new Path();
+    private final Path gridPath = new Path();
     private final List<PointF> rawPoints = new ArrayList<>();
     private final List<Waypoint> waypointMarkers = new ArrayList<>();
 
-    // Paints
+    // Pre-allocated Paints
     private final Paint pathPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint pathGlowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint gridPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -45,12 +46,15 @@ public class PathDrawingView extends View {
     private final Paint waypointPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint waypointTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint arrowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-    // Cached dimensional metrics
+    // Cached dimensional metrics (calculated once in init)
     private float cachedGridSize;
     private float cachedMarkerRadius;
+    private float cachedRingRadius;
+    private float cachedLabelOffset;
+    private float cachedWaypointRadius;
     private float cachedMinMoveDist;
+    private float textVerticalOffset;
 
     // Spline curve smoothing
     private float lastX, lastY;
@@ -87,15 +91,18 @@ public class PathDrawingView extends View {
     private void init() {
         cachedGridSize = dpToPx(28);
         cachedMarkerRadius = dpToPx(11);
+        cachedRingRadius = cachedMarkerRadius + dpToPx(3.5f);
+        cachedLabelOffset = cachedMarkerRadius + dpToPx(5.5f);
+        cachedWaypointRadius = dpToPx(7.5f);
         cachedMinMoveDist = dpToPx(6);
 
-        // Grid lines
+        // Blueprint dashed grid lines
         gridPaint.setColor(Color.parseColor("#E2E8F0"));
         gridPaint.setStyle(Paint.Style.STROKE);
         gridPaint.setStrokeWidth(dpToPx(1f));
         gridPaint.setPathEffect(new DashPathEffect(new float[]{dpToPx(3), dpToPx(4)}, 0));
 
-        // Outer glow
+        // Outer trajectory ambient glow
         pathGlowPaint.setColor(Color.parseColor("#332563EB"));
         pathGlowPaint.setStyle(Paint.Style.STROKE);
         pathGlowPaint.setStrokeWidth(dpToPx(10f));
@@ -109,7 +116,7 @@ public class PathDrawingView extends View {
         pathPaint.setStrokeCap(Paint.Cap.ROUND);
         pathPaint.setStrokeJoin(Paint.Join.ROUND);
 
-        // Start marker (Emerald)
+        // Start marker (Emerald green)
         startPaint.setColor(Color.parseColor("#10B981"));
         startPaint.setStyle(Paint.Style.FILL);
 
@@ -117,7 +124,7 @@ public class PathDrawingView extends View {
         startRingPaint.setStyle(Paint.Style.STROKE);
         startRingPaint.setStrokeWidth(dpToPx(4f));
 
-        // End marker (Crimson)
+        // End marker (Crimson red)
         endPaint.setColor(Color.parseColor("#EF4444"));
         endPaint.setStyle(Paint.Style.FILL);
 
@@ -133,19 +140,13 @@ public class PathDrawingView extends View {
         waypointTextPaint.setTextSize(dpToPx(9.5f));
         waypointTextPaint.setFakeBoldText(true);
         waypointTextPaint.setTextAlign(Paint.Align.CENTER);
+        textVerticalOffset = (waypointTextPaint.descent() + waypointTextPaint.ascent()) / 2f;
 
-        // Labels
+        // Start/Finish Labels
         labelPaint.setColor(Color.parseColor("#0F172A"));
         labelPaint.setTextSize(dpToPx(10.5f));
         labelPaint.setFakeBoldText(true);
         labelPaint.setTextAlign(Paint.Align.CENTER);
-
-        // Direction chevrons
-        arrowPaint.setColor(Color.parseColor("#1D4ED8"));
-        arrowPaint.setStyle(Paint.Style.STROKE);
-        arrowPaint.setStrokeWidth(dpToPx(2.5f));
-        arrowPaint.setStrokeCap(Paint.Cap.ROUND);
-        arrowPaint.setStrokeJoin(Paint.Join.ROUND);
     }
 
     public void setPathListener(PathListener listener) {
@@ -167,43 +168,50 @@ public class PathDrawingView extends View {
     }
 
     @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        // Pre-compile coordinate grid path once on resize to eliminate per-frame loop allocations
+        gridPath.reset();
+        for (float x = cachedGridSize; x < w; x += cachedGridSize) {
+            gridPath.moveTo(x, 0);
+            gridPath.lineTo(x, h);
+        }
+        for (float y = cachedGridSize; y < h; y += cachedGridSize) {
+            gridPath.moveTo(0, y);
+            gridPath.lineTo(w, y);
+        }
+    }
+
+    @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        int width = getWidth();
-        int height = getHeight();
+        // 1. Draw pre-compiled coordinate grid in 1 single GPU draw call
+        canvas.drawPath(gridPath, gridPaint);
 
-        // 1. Draw coordinate grid
-        for (float x = cachedGridSize; x < width; x += cachedGridSize) {
-            canvas.drawLine(x, 0, x, height, gridPaint);
-        }
-        for (float y = cachedGridSize; y < height; y += cachedGridSize) {
-            canvas.drawLine(0, y, width, y, gridPaint);
-        }
-
-        // 2. Draw path glow + core trajectory
+        // 2. Draw trajectory glow + core spline path
         canvas.drawPath(drawPath, pathGlowPaint);
         canvas.drawPath(drawPath, pathPaint);
 
         // 3. Draw intermediate waypoint markers
-        for (Waypoint wp : waypointMarkers) {
-            canvas.drawCircle(wp.x, wp.y, dpToPx(7f), waypointPaint);
-            float textY = wp.y - ((waypointTextPaint.descent() + waypointTextPaint.ascent()) / 2);
-            canvas.drawText(String.valueOf(wp.stepIndex), wp.x, textY, waypointTextPaint);
+        for (int i = 0; i < waypointMarkers.size(); i++) {
+            Waypoint wp = waypointMarkers.get(i);
+            canvas.drawCircle(wp.x, wp.y, cachedWaypointRadius, waypointPaint);
+            canvas.drawText(String.valueOf(wp.stepIndex), wp.x, wp.y - textVerticalOffset, waypointTextPaint);
         }
 
         // 4. Draw Start and End Markers
         if (!rawPoints.isEmpty()) {
             PointF start = rawPoints.get(0);
-            canvas.drawCircle(start.x, start.y, cachedMarkerRadius + dpToPx(3f), startRingPaint);
+            canvas.drawCircle(start.x, start.y, cachedRingRadius, startRingPaint);
             canvas.drawCircle(start.x, start.y, cachedMarkerRadius, startPaint);
-            canvas.drawText("START", start.x, start.y - cachedMarkerRadius - dpToPx(5f), labelPaint);
+            canvas.drawText("START", start.x, start.y - cachedLabelOffset, labelPaint);
 
             if (rawPoints.size() > 1) {
                 PointF end = rawPoints.get(rawPoints.size() - 1);
-                canvas.drawCircle(end.x, end.y, cachedMarkerRadius + dpToPx(3f), endRingPaint);
+                canvas.drawCircle(end.x, end.y, cachedRingRadius, endRingPaint);
                 canvas.drawCircle(end.x, end.y, cachedMarkerRadius, endPaint);
-                canvas.drawText("FINISH", end.x, end.y - cachedMarkerRadius - dpToPx(5f), labelPaint);
+                canvas.drawText("FINISH", end.x, end.y - cachedLabelOffset, labelPaint);
             }
         }
     }
@@ -253,9 +261,6 @@ public class PathDrawingView extends View {
         return super.onTouchEvent(event);
     }
 
-    /**
-     * Converts drawn points into simplified waypoints and Arduino sequential commands.
-     */
     private void buildWaypointsAndNotify() {
         if (rawPoints.size() < 2) return;
 

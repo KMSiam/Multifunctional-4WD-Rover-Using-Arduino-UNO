@@ -1,40 +1,64 @@
 #include <Servo.h>
 #include <SoftwareSerial.h>
 
-const int BT_RX = 2;
-const int BT_TX = 3;
+// Bluetooth SoftwareSerial pins
+const uint8_t BT_RX = 2;
+const uint8_t BT_TX = 3;
 SoftwareSerial BT(BT_RX, BT_TX);
 
-const int ENA = 11;
-const int IN1 = 9;
-const int IN2 = 8;
-const int IN3 = 7;
-const int IN4 = 6;
-const int ENB = 5;
+// L298N Motor Driver pins
+const uint8_t ENA = 11;
+const uint8_t IN1 = 9;
+const uint8_t IN2 = 8;
+const uint8_t IN3 = 7;
+const uint8_t IN4 = 6;
+const uint8_t ENB = 5;
 
-const int TRIG = A3;
-const int ECHO = A2;
+// HC-SR04 Ultrasonic pins
+const uint8_t TRIG = A3;
+const uint8_t ECHO = A2;
 
-const int SERVO_PIN = A4;
+// SG90 Micro Servo pin
+const uint8_t SERVO_PIN = A4;
 Servo servo;
 
-enum Mode { MANUAL, OBSTACLE, PATH };
+// Operating Modes
+enum Mode : uint8_t { MANUAL, OBSTACLE, PATH };
 Mode mode = MANUAL;
 
-int leftSpeed = 160;
-int rightSpeed = 160;
+// Motor PWM speeds (0 - 255)
+uint8_t leftSpeed = 160;
+uint8_t rightSpeed = 160;
 
-const int SAFE_DISTANCE = 15;
-
-const int CENTER = 90;
-const int LEFT_ANGLE = 150;
-const int RIGHT_ANGLE = 30;
+// Autonomous navigation thresholds & angles
+const uint8_t SAFE_DISTANCE = 15;
+const uint8_t CENTER = 90;
+const uint8_t LEFT_ANGLE = 150;
+const uint8_t RIGHT_ANGLE = 30;
 
 // Non-blocking 500ms safety auto-brake in Manual mode
 const unsigned long MANUAL_MOVE_TIME = 500;
 unsigned long manualMoveStartTime = 0;
 bool isManualMoving = false;
-String lastManualDirection = "";
+const char* lastManualDirection = "FORWARD";
+
+// Helper: send telemetry string to both Bluetooth and USB Hardware Serial
+void sendTelemetry(const __FlashStringHelper* msg) {
+  BT.println(msg);
+  Serial.println(msg);
+}
+
+void sendTelemetry(const char* msg) {
+  BT.println(msg);
+  Serial.println(msg);
+}
+
+void printManualStop() {
+  BT.print(lastManualDirection);
+  BT.println(F("_STOP"));
+  Serial.print(lastManualDirection);
+  Serial.println(F("_STOP"));
+}
 
 void setup() {
   Serial.begin(9600);
@@ -56,17 +80,14 @@ void setup() {
 
   stopMotors();
 
-  BT.println("ROVER_READY");
-  BT.println("MODE:MANUAL");
-  Serial.println("ROVER_READY");
-  Serial.println("MODE:MANUAL");
+  sendTelemetry(F("ROVER_READY"));
+  sendTelemetry(F("MODE:MANUAL"));
 }
 
 void loop() {
   if (BT.available()) {
     String cmd = BT.readStringUntil('\n');
     cmd.trim();
-
     if (cmd.length() > 0) {
       handleCommand(cmd);
     }
@@ -75,7 +96,6 @@ void loop() {
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
-
     if (cmd.length() > 0) {
       handleCommand(cmd);
     }
@@ -86,8 +106,7 @@ void loop() {
     if (millis() - manualMoveStartTime >= MANUAL_MOVE_TIME) {
       stopMotors();
       isManualMoving = false;
-      BT.println(lastManualDirection + "_STOP");
-      Serial.println(lastManualDirection + "_STOP");
+      printManualStop();
     }
   }
 
@@ -125,14 +144,13 @@ bool smartDelay(unsigned long ms) {
   return true;
 }
 
-void handleCommand(String cmd) {
+void handleCommand(const String& cmd) {
   if (cmd == "M") {
     mode = MANUAL;
     isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
-    BT.println("MODE:MANUAL");
-    Serial.println("MODE:MANUAL");
+    sendTelemetry(F("MODE:MANUAL"));
     return;
   }
 
@@ -141,8 +159,7 @@ void handleCommand(String cmd) {
     isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
-    BT.println("MODE:OBSTACLE");
-    Serial.println("MODE:OBSTACLE");
+    sendTelemetry(F("MODE:OBSTACLE"));
     return;
   }
 
@@ -151,8 +168,7 @@ void handleCommand(String cmd) {
     isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
-    BT.println("MODE:PATH");
-    Serial.println("MODE:PATH");
+    sendTelemetry(F("MODE:PATH"));
     return;
   }
 
@@ -161,26 +177,24 @@ void handleCommand(String cmd) {
     isManualMoving = false;
     stopMotors();
     servo.write(CENTER);
-    BT.println("STOP");
-    BT.println("MODE:MANUAL");
-    Serial.println("STOP");
-    Serial.println("MODE:MANUAL");
+    sendTelemetry(F("STOP"));
+    sendTelemetry(F("MODE:MANUAL"));
     return;
   }
 
   if (cmd.startsWith("V:")) {
     int speed = cmd.substring(2).toInt();
     if (speed >= 0 && speed <= 255) {
-      leftSpeed = speed;
-      rightSpeed = speed;
+      leftSpeed = (uint8_t)speed;
+      rightSpeed = (uint8_t)speed;
       if (digitalRead(IN1) != LOW || digitalRead(IN2) != LOW || 
           digitalRead(IN3) != LOW || digitalRead(IN4) != LOW) {
         analogWrite(ENA, leftSpeed);
         analogWrite(ENB, rightSpeed);
       }
-      BT.print("SPEED:");
+      BT.print(F("SPEED:"));
       BT.println(speed);
-      Serial.print("SPEED:");
+      Serial.print(F("SPEED:"));
       Serial.println(speed);
     }
     return;
@@ -193,20 +207,20 @@ void handleCommand(String cmd) {
       int newRight = cmd.substring(comma + 3).toInt();
 
       if (newLeft >= 0 && newLeft <= 255 && newRight >= 0 && newRight <= 255) {
-        leftSpeed = newLeft;
-        rightSpeed = newRight;
+        leftSpeed = (uint8_t)newLeft;
+        rightSpeed = (uint8_t)newRight;
         if (digitalRead(IN1) != LOW || digitalRead(IN2) != LOW || 
             digitalRead(IN3) != LOW || digitalRead(IN4) != LOW) {
           analogWrite(ENA, leftSpeed);
           analogWrite(ENB, rightSpeed);
         }
-        BT.print("SPEED:L");
+        BT.print(F("SPEED:L"));
         BT.print(leftSpeed);
-        BT.print(",R");
+        BT.print(F(",R"));
         BT.println(rightSpeed);
-        Serial.print("SPEED:L");
+        Serial.print(F("SPEED:L"));
         Serial.print(leftSpeed);
-        Serial.print(",R");
+        Serial.print(F(",R"));
         Serial.println(rightSpeed);
       }
     }
@@ -220,8 +234,7 @@ void handleCommand(String cmd) {
     manualMoveStartTime = millis();
     isManualMoving = true;
     lastManualDirection = "FORWARD";
-    BT.println("FORWARD");
-    Serial.println("FORWARD");
+    sendTelemetry(F("FORWARD"));
     return;
   }
 
@@ -231,8 +244,7 @@ void handleCommand(String cmd) {
     manualMoveStartTime = millis();
     isManualMoving = true;
     lastManualDirection = "BACKWARD";
-    BT.println("BACKWARD");
-    Serial.println("BACKWARD");
+    sendTelemetry(F("BACKWARD"));
     return;
   }
 
@@ -242,8 +254,7 @@ void handleCommand(String cmd) {
     manualMoveStartTime = millis();
     isManualMoving = true;
     lastManualDirection = "LEFT";
-    BT.println("LEFT");
-    Serial.println("LEFT");
+    sendTelemetry(F("LEFT"));
     return;
   }
 
@@ -253,8 +264,7 @@ void handleCommand(String cmd) {
     manualMoveStartTime = millis();
     isManualMoving = true;
     lastManualDirection = "RIGHT";
-    BT.println("RIGHT");
-    Serial.println("RIGHT");
+    sendTelemetry(F("RIGHT"));
     return;
   }
 
@@ -263,7 +273,7 @@ void handleCommand(String cmd) {
   }
 }
 
-void setMotors(int a, int b, int c, int d) {
+void setMotors(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   bool wasStopped = (digitalRead(IN1) == LOW && digitalRead(IN2) == LOW && 
                      digitalRead(IN3) == LOW && digitalRead(IN4) == LOW);
 
@@ -298,7 +308,7 @@ void stopMotors() {
   analogWrite(ENB, 0);
 }
 
-long distanceCM() {
+uint16_t distanceCM() {
   digitalWrite(TRIG, LOW);
   delayMicroseconds(2);
 
@@ -306,20 +316,21 @@ long distanceCM() {
   delayMicroseconds(10);
   digitalWrite(TRIG, LOW);
 
-  long duration = pulseIn(ECHO, HIGH, 25000);
+  unsigned long duration = pulseIn(ECHO, HIGH, 25000);
 
   if (duration == 0)
     return 400;
 
-  return duration * 0.0343 / 2;
+  // Ultra-fast integer division (58.2 us per cm round trip)
+  return (uint16_t)(duration / 58);
 }
 
 void obstacleMode() {
-  long dist = distanceCM();
+  uint16_t dist = distanceCM();
   
-  BT.print("DIST:");
+  BT.print(F("DIST:"));
   BT.println(dist);
-  Serial.print("DIST:");
+  Serial.print(F("DIST:"));
   Serial.println(dist);
 
   if (dist > SAFE_DISTANCE) {
@@ -329,35 +340,31 @@ void obstacleMode() {
   }
 
   stopMotors();
-  BT.println("OBSTACLE");
-  Serial.println("OBSTACLE");
+  sendTelemetry(F("OBSTACLE"));
 
   if (!smartDelay(200)) return;
 
   servo.write(LEFT_ANGLE);
   if (!smartDelay(400)) return;
-  long leftDist = distanceCM();
+  uint16_t leftDist = distanceCM();
 
   servo.write(RIGHT_ANGLE);
   if (!smartDelay(400)) return;
-  long rightDist = distanceCM();
+  uint16_t rightDist = distanceCM();
 
   servo.write(CENTER);
   if (!smartDelay(150)) return;
 
   if (leftDist > SAFE_DISTANCE && leftDist > rightDist) {
-    BT.println("TURN_LEFT");
-    Serial.println("TURN_LEFT");
+    sendTelemetry(F("TURN_LEFT"));
     turnLeft();
     if (!smartDelay(600)) return;
   } else if (rightDist > SAFE_DISTANCE) {
-    BT.println("TURN_RIGHT");
-    Serial.println("TURN_RIGHT");
+    sendTelemetry(F("TURN_RIGHT"));
     turnRight();
     if (!smartDelay(600)) return;
   } else {
-    BT.println("BOTH_BLOCKED");
-    Serial.println("BOTH_BLOCKED");
+    sendTelemetry(F("BOTH_BLOCKED"));
     backward();
     if (!smartDelay(500)) return;
     turnRight();
@@ -367,10 +374,11 @@ void obstacleMode() {
   stopMotors();
 }
 
-void executePath(String path) {
+void executePath(const String& path) {
+  int len = path.length();
   int start = 0;
 
-  while (start < path.length() && mode == PATH) {
+  while (start < len && mode == PATH) {
     int comma = path.indexOf(',', start);
     String command;
 
@@ -381,7 +389,9 @@ void executePath(String path) {
 
     command.trim();
 
-    executeStep(command);
+    if (command.length() > 0) {
+      executeStep(command);
+    }
 
     if (comma == -1 || mode != PATH)
       break;
@@ -391,12 +401,11 @@ void executePath(String path) {
 
   stopMotors();
   if (mode == PATH) {
-    BT.println("PATH_COMPLETE");
-    Serial.println("PATH_COMPLETE");
+    sendTelemetry(F("PATH_COMPLETE"));
   }
 }
 
-void executeStep(String command) {
+void executeStep(const String& command) {
   if (command == "S") {
     stopMotors();
     return;
@@ -411,9 +420,9 @@ void executeStep(String command) {
   if (duration <= 0) return;
 
   // Real-time telemetry to app
-  BT.print("PATH_STEP:");
+  BT.print(F("PATH_STEP:"));
   BT.println(command);
-  Serial.print("PATH_STEP:");
+  Serial.print(F("PATH_STEP:"));
   Serial.println(command);
 
   switch (direction) {
@@ -431,12 +440,12 @@ void executeStep(String command) {
     // Collision avoidance safety guard during forward path movement
     if (direction == 'F' && millis() - lastSonarCheck >= 80) {
       lastSonarCheck = millis();
-      long dist = distanceCM();
+      uint16_t dist = distanceCM();
       if (dist > 0 && dist <= SAFE_DISTANCE) {
         stopMotors();
-        BT.print("PATH_OBSTACLE:");
+        BT.print(F("PATH_OBSTACLE:"));
         BT.println(dist);
-        Serial.print("PATH_OBSTACLE:");
+        Serial.print(F("PATH_OBSTACLE:"));
         Serial.println(dist);
         mode = MANUAL;
         return;

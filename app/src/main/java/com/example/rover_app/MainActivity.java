@@ -1352,14 +1352,22 @@ public class MainActivity extends AppCompatActivity {
         if (btnSend != null) btnSend.setEnabled(enabled);
     }
 
+    private float cachedDensity = 0f;
+
     private void registerDisconnectReceiver() {
         IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED);
-        registerReceiver(aclDisconnectReceiver, filter);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(aclDisconnectReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(aclDisconnectReceiver, filter);
+        }
     }
 
     private int dpToPx(int dp) {
-        float density = getResources().getDisplayMetrics().density;
-        return Math.round(dp * density);
+        if (cachedDensity <= 0f) {
+            cachedDensity = getResources().getDisplayMetrics().density;
+        }
+        return Math.round(dp * cachedDensity);
     }
 
     @Override
