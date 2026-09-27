@@ -1,83 +1,480 @@
 #include <Servo.h>
 #include <SoftwareSerial.h>
 
-// Bluetooth SoftwareSerial pins
-const uint8_t BT_RX = 2;
-const uint8_t BT_TX = 3;
+// ---------- Pins ----------
+const byte BT_RX = 2;
+const byte BT_TX = 3;
+const byte ENA = 11, IN1 = 9, IN2 = 8;
+const byte IN3 = 7, IN4 = 6, ENB = 5;
+const byte TRIG = A3, ECHO = A2;
+const byte SERVO_PIN = A4;
+
 SoftwareSerial BT(BT_RX, BT_TX);
-
-// L298N Motor Driver pins
-const uint8_t ENA = 11;
-const uint8_t IN1 = 9;
-const uint8_t IN2 = 8;
-const uint8_t IN3 = 7;
-const uint8_t IN4 = 6;
-const uint8_t ENB = 5;
-
-// HC-SR04 Ultrasonic pins
-const uint8_t TRIG = A3;
-const uint8_t ECHO = A2;
-
-// SG90 Micro Servo pin
-const uint8_t SERVO_PIN = A4;
 Servo servo;
 
-// Operating Modes
-enum Mode : uint8_t { MANUAL, OBSTACLE, PATH };
+// ---------- Modes ----------
+enum Mode { MANUAL, OBSTACLE, PATH };
 Mode mode = MANUAL;
 
-// Motor PWM speeds (0 - 255)
-uint8_t leftSpeed = 160;
-uint8_t rightSpeed = 160;
+// ---------- Settings ----------
+byte leftSpeed = 160;
+byte rightSpeed = 160;
+const byte SAFE_DISTANCE = 25;
+const byte CENTER = 90;
+const byte LEFT_ANGLE = 150;
+const byte RIGHT_ANGLE = 30;
+const unsigned long MANUAL_TIME = 500;
 
-// Autonomous navigation thresholds & angles
-const uint8_t SAFE_DISTANCE = 25;
-const uint8_t CENTER = 90;
-const uint8_t LEFT_ANGLE = 150;
-const uint8_t RIGHT_ANGLE = 30;
+// ---------- Manual timer ----------
+unsigned long manualStart = 0;
+bool manualMoving = false;
+const char *lastDirection = "FORWARD";
 
-// Non-blocking 500ms safety auto-brake in Manual mode
-const unsigned long MANUAL_MOVE_TIME = 500;
-unsigned long manualMoveStartTime = 0;
-bool isManualMoving = false;
-const char* lastManualDirection = "FORWARD";
+// ---------- Input ----------
+String btInput = "";
+String serialInput = "";
+const unsigned int MAX_INPUT = 300;
 
-// Helper: send telemetry string to both Bluetooth and USB Hardware Serial
-void sendTelemetry(const __FlashStringHelper* msg) {
+// ---------- Draw-path queue ----------
+struct PathStep {
+  char dir;
+  unsigned long time;
+};
+
+const byte MAX_STEPS = 80;
+PathStep steps[MAX_STEPS];
+byte stepCount = 0;
+byte currentStep = 0;
+bool pathStepRunning = false;
+unsigned long pathStart = 0;
+unsigned long pathDuration = 0;
+char pathDirection = 0;
+unsigned long lastPathSonar = 0;
+
+// ============================================================
+// Communication
+// ============================================================
+
+void sendText(const __FlashStringHelper *msg) {
   BT.println(msg);
   Serial.println(msg);
 }
 
-void sendTelemetry(const char* msg) {
-  BT.println(msg);
-  Serial.println(msg);
+void readPort(Stream &port, String &buffer);
+void handleCommand(const String &cmd);
+
+// Reads complete commands without blocking with readStringUntil().
+void readPort(Stream &port, String &buffer) {
+  while (port.available()) {
+    char c = port.read();
+
+    if (c == '\n') {
+      buffer.trim();
+      if (buffer.length()) handleCommand(buffer);
+      buffer = "";
+    } else if (c != '\r') {
+      if (buffer.length() < MAX_INPUT) {
+        buffer += c;
+      } else {
+        buffer = "";  // discard an oversized command
+      }
+    }
+  }
 }
 
-void printManualStop() {
-  BT.print(lastManualDirection);
-  BT.println(F("_STOP"));
-  Serial.print(lastManualDirection);
-  Serial.println(F("_STOP"));
+// ============================================================
+// Motors
+// ============================================================
+
+void setMotors(byte a, byte b, byte c, byte d) {
+  digitalWrite(IN1, a);
+  digitalWrite(IN2, b);
+  digitalWrite(IN3, c);
+  digitalWrite(IN4, d);
+  analogWrite(ENA, leftSpeed);
+  analogWrite(ENB, rightSpeed);
 }
 
-// Explicit forward declarations (guarantees zero compiler scope errors in any IDE version)
-void stopMotors();
-void forward();
-void backward();
-void turnLeft();
-void turnRight();
-void setMotors(uint8_t a, uint8_t b, uint8_t c, uint8_t d);
-uint16_t distanceCM();
-void obstacleMode();
-void executePath(const String& path);
-void executeStep(const String& command);
-void handleCommand(const String& cmd);
-bool smartDelay(unsigned long ms);
+void forward()   { setMotors(HIGH, LOW, HIGH, LOW); }
+void backward()  { setMotors(LOW, HIGH, LOW, HIGH); }
+void turnLeft()  { setMotors(LOW, HIGH, HIGH, LOW); }
+void turnRight() { setMotors(HIGH, LOW, LOW, HIGH); }
+
+void stopMotors() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}
+
+// ============================================================
+// Ultrasonic
+// ============================================================
+
+uint16_t distanceCM() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+
+  unsigned long duration = pulseIn(ECHO, HIGH, 25000);
+  if (duration == 0) return 400;
+  return duration / 58;
+}
+
+// ============================================================
+// Draw Path
+// ============================================================
+
+void clearPath() {
+  stepCount = 0;
+  currentStep = 0;
+  pathStepRunning = false;
+}
+
+// Add one step. Consecutive equal directions are merged.
+void addPathStep(char dir, unsigned long duration) {
+  if (duration == 0) return;
+
+  if (stepCount > 0 && steps[stepCount - 1].dir == dir) {
+    steps[stepCount - 1].time += duration;
+    return;
+  }
+
+  if (stepCount >= MAX_STEPS) {
+    sendText(F("PATH_QUEUE_FULL"));
+    return;
+  }
+
+  steps[stepCount].dir = dir;
+  steps[stepCount].time = duration;
+  stepCount++;
+}
+
+// Converts: F:1000,R:500,F:800,S
+void addPathCommands(const String &data) {
+  int start = 0;
+
+  while (start < data.length()) {
+    int comma = data.indexOf(',', start);
+    String item = (comma == -1)
+                    ? data.substring(start)
+                    : data.substring(start, comma);
+
+    item.trim();
+
+    if (item == "S") {
+      break;
+    }
+
+    int colon = item.indexOf(':');
+    if (colon > 0) {
+      char dir = item.charAt(0);
+      unsigned long duration = item.substring(colon + 1).toInt();
+
+      if ((dir == 'F' || dir == 'B' || dir == 'L' || dir == 'R') &&
+          duration > 0) {
+        addPathStep(dir, duration);
+      }
+    }
+
+    if (comma == -1) break;
+    start = comma + 1;
+  }
+}
+
+void startCurrentPathStep() {
+  if (currentStep >= stepCount) {
+    pathStepRunning = false;
+    stopMotors();
+    sendText(F("PATH_COMPLETE"));
+    return;
+  }
+
+  pathDirection = steps[currentStep].dir;
+  pathDuration = steps[currentStep].time;
+  pathStart = millis();
+  lastPathSonar = 0;
+  pathStepRunning = true;
+
+  switch (pathDirection) {
+    case 'F': forward();   break;
+    case 'B': backward();  break;
+    case 'L': turnLeft();  break;
+    case 'R': turnRight(); break;
+  }
+
+  BT.print(F("PATH_STEP:"));
+  BT.print(pathDirection);
+  BT.print(':');
+  BT.println(pathDuration);
+
+  Serial.print(F("PATH_STEP:"));
+  Serial.print(pathDirection);
+  Serial.print(':');
+  Serial.println(pathDuration);
+}
+
+void startPath(const String &data) {
+  clearPath();
+  addPathCommands(data);
+  currentStep = 0;
+  pathStepRunning = false;
+
+  if (stepCount == 0) {
+    sendText(F("PATH_EMPTY"));
+    return;
+  }
+
+  sendText(F("PATH_START"));
+  startCurrentPathStep();
+}
+
+void updatePath() {
+  if (mode != PATH || stepCount == 0) return;
+
+  // Add more commands while the rover is already moving.
+  readPort(BT, btInput);
+  readPort(Serial, serialInput);
+
+  if (!pathStepRunning) {
+    startCurrentPathStep();
+    return;
+  }
+
+  // Safety check only during forward movement.
+  if (pathDirection == 'F' && millis() - lastPathSonar >= 100) {
+    lastPathSonar = millis();
+    uint16_t dist = distanceCM();
+
+    if (dist <= SAFE_DISTANCE) {
+      stopMotors();
+      clearPath();
+      mode = MANUAL;
+
+      BT.print(F("PATH_OBSTACLE:"));
+      BT.println(dist);
+      Serial.print(F("PATH_OBSTACLE:"));
+      Serial.println(dist);
+      return;
+    }
+  }
+
+  if (millis() - pathStart >= pathDuration) {
+    pathStepRunning = false;
+    currentStep++;
+
+    // Do NOT stop here. The next path segment starts immediately.
+    if (currentStep < stepCount) {
+      startCurrentPathStep();
+    } else {
+      stopMotors();
+      clearPath();
+      sendText(F("PATH_COMPLETE"));
+    }
+  }
+}
+
+// ============================================================
+// Obstacle avoidance
+// ============================================================
+
+bool waitAndListen(unsigned long ms) {
+  unsigned long start = millis();
+
+  while (millis() - start < ms) {
+    readPort(BT, btInput);
+    readPort(Serial, serialInput);
+
+    if (mode != OBSTACLE) {
+      stopMotors();
+      return false;
+    }
+  }
+  return true;
+}
+
+void obstacleMode() {
+  uint16_t front = distanceCM();
+
+  BT.print(F("DIST:"));
+  BT.println(front);
+  Serial.print(F("DIST:"));
+  Serial.println(front);
+
+  if (front > SAFE_DISTANCE) {
+    forward();
+    waitAndListen(100);
+    return;
+  }
+
+  stopMotors();
+  sendText(F("OBSTACLE"));
+
+  servo.write(LEFT_ANGLE);
+  if (!waitAndListen(300)) return;
+  uint16_t left = distanceCM();
+
+  servo.write(RIGHT_ANGLE);
+  if (!waitAndListen(300)) return;
+  uint16_t right = distanceCM();
+
+  servo.write(CENTER);
+  if (!waitAndListen(100)) return;
+
+  if (left > SAFE_DISTANCE && left >= right) {
+    sendText(F("TURN_LEFT"));
+    turnLeft();
+    waitAndListen(450);
+  } else if (right > SAFE_DISTANCE) {
+    sendText(F("TURN_RIGHT"));
+    turnRight();
+    waitAndListen(450);
+  } else {
+    sendText(F("BOTH_BLOCKED"));
+    backward();
+    if (!waitAndListen(350)) return;
+    turnRight();
+    waitAndListen(700);
+  }
+
+  stopMotors();
+}
+
+// ============================================================
+// Commands
+// ============================================================
+
+void handleCommand(const String &cmd) {
+  // Modes
+  if (cmd == "M") {
+    mode = MANUAL;
+    clearPath();
+    manualMoving = false;
+    stopMotors();
+    servo.write(CENTER);
+    sendText(F("MODE:MANUAL"));
+    return;
+  }
+
+  if (cmd == "O") {
+    mode = OBSTACLE;
+    clearPath();
+    manualMoving = false;
+    stopMotors();
+    servo.write(CENTER);
+    sendText(F("MODE:OBSTACLE"));
+    return;
+  }
+
+  if (cmd == "P") {
+    mode = PATH;
+    clearPath();
+    manualMoving = false;
+    stopMotors();
+    servo.write(CENTER);
+    sendText(F("MODE:PATH"));
+    return;
+  }
+
+  if (cmd == "S") {
+    mode = MANUAL;
+    clearPath();
+    manualMoving = false;
+    stopMotors();
+    servo.write(CENTER);
+    sendText(F("STOP"));
+    sendText(F("MODE:MANUAL"));
+    return;
+  }
+
+  // Speed: V:160
+  if (cmd.startsWith("V:")) {
+    int speed = cmd.substring(2).toInt();
+    if (speed >= 0 && speed <= 255) {
+      leftSpeed = speed;
+      rightSpeed = speed;
+      BT.print(F("SPEED:"));
+      BT.println(speed);
+      Serial.print(F("SPEED:"));
+      Serial.println(speed);
+    }
+    return;
+  }
+
+  // Separate left/right speed: L:150,R:170
+  // Set this before entering PATH mode.
+  if (cmd.startsWith("L:") && cmd.indexOf(",R:") > 0 && mode != PATH) {
+    int comma = cmd.indexOf(',');
+    int left = cmd.substring(2, comma).toInt();
+    int right = cmd.substring(comma + 3).toInt();
+
+    if (left >= 0 && left <= 255 && right >= 0 && right <= 255) {
+      leftSpeed = left;
+      rightSpeed = right;
+      BT.print(F("SPEED:L"));
+      BT.print(leftSpeed);
+      BT.print(F(",R"));
+      BT.println(rightSpeed);
+      Serial.print(F("SPEED:L"));
+      Serial.print(leftSpeed);
+      Serial.print(F(",R"));
+      Serial.println(rightSpeed);
+    }
+    return;
+  }
+
+  // Draw path commands. In PATH mode, L:500 means LEFT for 500 ms.
+  if (mode == PATH && cmd.length() >= 3) {
+    char c = cmd.charAt(0);
+    if (c == 'F' || c == 'B' || c == 'L' || c == 'R') {
+      if (!pathStepRunning && currentStep == 0 && stepCount == 0) {
+        startPath(cmd);
+      } else {
+        addPathCommands(cmd);
+      }
+      return;
+    }
+  }
+
+  // Manual movement
+  if (cmd == "F" || cmd == "B" || cmd == "L" || cmd == "R") {
+    mode = MANUAL;
+    clearPath();
+
+    if (cmd == "F") {
+      forward();
+      lastDirection = "FORWARD";
+      sendText(F("FORWARD"));
+    } else if (cmd == "B") {
+      backward();
+      lastDirection = "BACKWARD";
+      sendText(F("BACKWARD"));
+    } else if (cmd == "L") {
+      turnLeft();
+      lastDirection = "LEFT";
+      sendText(F("LEFT"));
+    } else {
+      turnRight();
+      lastDirection = "RIGHT";
+      sendText(F("RIGHT"));
+    }
+
+    manualStart = millis();
+    manualMoving = true;
+  }
+}
+
+// ============================================================
+// Setup / Loop
+// ============================================================
 
 void setup() {
   Serial.begin(9600);
   BT.begin(9600);
-  BT.setTimeout(80); // Generous timeout for multi-step path commands
 
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
@@ -91,418 +488,30 @@ void setup() {
 
   servo.attach(SERVO_PIN);
   servo.write(CENTER);
-
   stopMotors();
 
-  sendTelemetry(F("ROVER_READY"));
-  sendTelemetry(F("MODE:MANUAL"));
+  sendText(F("ROVER_READY"));
+  sendText(F("MODE:MANUAL"));
 }
 
 void loop() {
-  if (BT.available()) {
-    String cmd = BT.readStringUntil('\n');
-    cmd.trim();
-    if (cmd.length() > 0) {
-      handleCommand(cmd);
-    }
-  }
+  readPort(BT, btInput);
+  readPort(Serial, serialInput);
 
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-    if (cmd.length() > 0) {
-      handleCommand(cmd);
-    }
-  }
-
-  // Non-blocking 500ms safety auto-brake in Manual mode
-  if (mode == MANUAL && isManualMoving) {
-    if (millis() - manualMoveStartTime >= MANUAL_MOVE_TIME) {
-      stopMotors();
-      isManualMoving = false;
-      printManualStop();
-    }
+  // Manual safety stop after 500 ms.
+  if (mode == MANUAL && manualMoving &&
+      millis() - manualStart >= MANUAL_TIME) {
+    stopMotors();
+    manualMoving = false;
+    BT.print(lastDirection);
+    BT.println(F("_STOP"));
+    Serial.print(lastDirection);
+    Serial.println(F("_STOP"));
   }
 
   if (mode == OBSTACLE) {
     obstacleMode();
+  } else if (mode == PATH) {
+    updatePath();
   }
-}
-
-bool smartDelay(unsigned long ms) {
-  unsigned long start = millis();
-  while (millis() - start < ms) {
-    if (BT.available()) {
-      String cmd = BT.readStringUntil('\n');
-      cmd.trim();
-      if (cmd.length() > 0) {
-        handleCommand(cmd);
-        if (mode != OBSTACLE) {
-          stopMotors();
-          return false;
-        }
-      }
-    }
-    if (Serial.available()) {
-      String cmd = Serial.readStringUntil('\n');
-      cmd.trim();
-      if (cmd.length() > 0) {
-        handleCommand(cmd);
-        if (mode != OBSTACLE) {
-          stopMotors();
-          return false;
-        }
-      }
-    }
-  }
-  return true;
-}
-
-void handleCommand(const String& cmd) {
-  if (cmd == "M") {
-    mode = MANUAL;
-    isManualMoving = false;
-    stopMotors();
-    servo.write(CENTER);
-    sendTelemetry(F("MODE:MANUAL"));
-    return;
-  }
-
-  if (cmd == "O") {
-    mode = OBSTACLE;
-    isManualMoving = false;
-    stopMotors();
-    servo.write(CENTER);
-    sendTelemetry(F("MODE:OBSTACLE"));
-    return;
-  }
-
-  if (cmd == "P") {
-    mode = PATH;
-    isManualMoving = false;
-    stopMotors();
-    servo.write(CENTER);
-    sendTelemetry(F("MODE:PATH"));
-    return;
-  }
-
-  if (cmd == "S") {
-    mode = MANUAL;
-    isManualMoving = false;
-    stopMotors();
-    servo.write(CENTER);
-    sendTelemetry(F("STOP"));
-    sendTelemetry(F("MODE:MANUAL"));
-    return;
-  }
-
-  if (cmd.startsWith("V:")) {
-    int speed = cmd.substring(2).toInt();
-    if (speed >= 0 && speed <= 255) {
-      leftSpeed = (uint8_t)speed;
-      rightSpeed = (uint8_t)speed;
-      if (digitalRead(IN1) != LOW || digitalRead(IN2) != LOW || 
-          digitalRead(IN3) != LOW || digitalRead(IN4) != LOW) {
-        analogWrite(ENA, leftSpeed);
-        analogWrite(ENB, rightSpeed);
-      }
-      BT.print(F("SPEED:"));
-      BT.println(speed);
-      Serial.print(F("SPEED:"));
-      Serial.println(speed);
-    }
-    return;
-  }
-
-  if (cmd.startsWith("L:")) {
-    int comma = cmd.indexOf(',');
-    if (comma > 0) {
-      int newLeft = cmd.substring(2, comma).toInt();
-      int newRight = cmd.substring(comma + 3).toInt();
-
-      if (newLeft >= 0 && newLeft <= 255 && newRight >= 0 && newRight <= 255) {
-        leftSpeed = (uint8_t)newLeft;
-        rightSpeed = (uint8_t)newRight;
-        if (digitalRead(IN1) != LOW || digitalRead(IN2) != LOW || 
-            digitalRead(IN3) != LOW || digitalRead(IN4) != LOW) {
-          analogWrite(ENA, leftSpeed);
-          analogWrite(ENB, rightSpeed);
-        }
-        BT.print(F("SPEED:L"));
-        BT.print(leftSpeed);
-        BT.print(F(",R"));
-        BT.println(rightSpeed);
-        Serial.print(F("SPEED:L"));
-        Serial.print(leftSpeed);
-        Serial.print(F(",R"));
-        Serial.println(rightSpeed);
-      }
-    }
-    return;
-  }
-
-  // Manual driving commands (500ms non-blocking safety pulse)
-  if (cmd == "F") {
-    mode = MANUAL;
-    forward();
-    manualMoveStartTime = millis();
-    isManualMoving = true;
-    lastManualDirection = "FORWARD";
-    sendTelemetry(F("FORWARD"));
-    return;
-  }
-
-  if (cmd == "B") {
-    mode = MANUAL;
-    backward();
-    manualMoveStartTime = millis();
-    isManualMoving = true;
-    lastManualDirection = "BACKWARD";
-    sendTelemetry(F("BACKWARD"));
-    return;
-  }
-
-  if (cmd == "L") {
-    mode = MANUAL;
-    turnLeft();
-    manualMoveStartTime = millis();
-    isManualMoving = true;
-    lastManualDirection = "LEFT";
-    sendTelemetry(F("LEFT"));
-    return;
-  }
-
-  if (cmd == "R") {
-    mode = MANUAL;
-    turnRight();
-    manualMoveStartTime = millis();
-    isManualMoving = true;
-    lastManualDirection = "RIGHT";
-    sendTelemetry(F("RIGHT"));
-    return;
-  }
-
-  if (mode == PATH) {
-    executePath(cmd);
-  }
-}
-
-void setMotors(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
-  // Check if motors were completely stopped
-  bool wasStopped = (digitalRead(IN1) == LOW && digitalRead(IN2) == LOW && 
-                     digitalRead(IN3) == LOW && digitalRead(IN4) == LOW);
-
-  digitalWrite(IN1, a);
-  digitalWrite(IN2, b);
-  digitalWrite(IN3, c);
-  digitalWrite(IN4, d);
-
-  // Soft-start ramp from standstill: prevents massive 5A inrush current spikes
-  // that collapse thin Dupont wires, drop battery voltage, and cause servo jitter
-  if (wasStopped && leftSpeed > 0 && rightSpeed > 0) {
-    uint8_t step1_L = leftSpeed / 3;
-    uint8_t step1_R = rightSpeed / 3;
-    uint8_t step2_L = (leftSpeed * 2) / 3;
-    uint8_t step2_R = (rightSpeed * 2) / 3;
-
-    analogWrite(ENA, step1_L > 40 ? step1_L : 40);
-    analogWrite(ENB, step1_R > 40 ? step1_R : 40);
-    delay(12);
-
-    analogWrite(ENA, step2_L > 80 ? step2_L : 80);
-    analogWrite(ENB, step2_R > 80 ? step2_R : 80);
-    delay(12);
-  }
-
-  analogWrite(ENA, leftSpeed);
-  analogWrite(ENB, rightSpeed);
-}
-
-void forward()   { setMotors(HIGH, LOW, HIGH, LOW); }
-void backward()  { setMotors(LOW, HIGH, LOW, HIGH); }
-void turnLeft()  { setMotors(LOW, HIGH, HIGH, LOW); }
-void turnRight() { setMotors(HIGH, LOW, LOW, HIGH); }
-
-void stopMotors() {
-  // Graceful braking: cut PWM first to damp inductive surge, then clear direction pins
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
-  delayMicroseconds(50);
-
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, LOW);
-}
-
-uint16_t distanceCM() {
-  digitalWrite(TRIG, LOW);
-  delayMicroseconds(2);
-
-  digitalWrite(TRIG, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG, LOW);
-
-  unsigned long duration = pulseIn(ECHO, HIGH, 25000);
-
-  if (duration == 0)
-    return 400;
-
-  // Ultra-fast integer division (58.2 us per cm round trip)
-  return (uint16_t)(duration / 58);
-}
-
-void obstacleMode() {
-  uint16_t dist = distanceCM();
-  
-  BT.print(F("DIST:"));
-  BT.println(dist);
-  Serial.print(F("DIST:"));
-  Serial.println(dist);
-
-  if (dist > SAFE_DISTANCE) {
-    forward();
-    if (!smartDelay(100)) return;
-    return;
-  }
-
-  stopMotors();
-  sendTelemetry(F("OBSTACLE"));
-
-  if (!smartDelay(200)) return;
-
-  servo.write(LEFT_ANGLE);
-  if (!smartDelay(400)) return;
-  uint16_t leftDist = distanceCM();
-
-  servo.write(RIGHT_ANGLE);
-  if (!smartDelay(400)) return;
-  uint16_t rightDist = distanceCM();
-
-  servo.write(CENTER);
-  if (!smartDelay(150)) return;
-
-  if (leftDist > SAFE_DISTANCE && leftDist > rightDist) {
-    sendTelemetry(F("TURN_LEFT"));
-    turnLeft();
-    if (!smartDelay(600)) return;
-  } else if (rightDist > SAFE_DISTANCE) {
-    sendTelemetry(F("TURN_RIGHT"));
-    turnRight();
-    if (!smartDelay(600)) return;
-  } else {
-    sendTelemetry(F("BOTH_BLOCKED"));
-    backward();
-    if (!smartDelay(500)) return;
-    turnRight();
-    if (!smartDelay(900)) return;
-  }
-
-  stopMotors();
-}
-
-void executePath(const String& path) {
-  int len = path.length();
-  int start = 0;
-
-  while (start < len && mode == PATH) {
-    int comma = path.indexOf(',', start);
-    String command;
-
-    if (comma == -1)
-      command = path.substring(start);
-    else
-      command = path.substring(start, comma);
-
-    command.trim();
-
-    if (command.length() > 0) {
-      executeStep(command);
-    }
-
-    if (comma == -1 || mode != PATH)
-      break;
-
-    start = comma + 1;
-  }
-
-  stopMotors();
-  if (mode == PATH) {
-    sendTelemetry(F("PATH_COMPLETE"));
-  }
-}
-
-void executeStep(const String& command) {
-  if (command == "S") {
-    stopMotors();
-    return;
-  }
-
-  int colon = command.indexOf(':');
-  if (colon == -1) return;
-
-  char direction = command.charAt(0);
-  long duration = command.substring(colon + 1).toInt();
-
-  if (duration <= 0) return;
-
-  // Real-time telemetry to app
-  BT.print(F("PATH_STEP:"));
-  BT.println(command);
-  Serial.print(F("PATH_STEP:"));
-  Serial.println(command);
-
-  switch (direction) {
-    case 'F': forward();   break;
-    case 'B': backward();  break;
-    case 'L': turnLeft();  break;
-    case 'R': turnRight(); break;
-    default:  return;
-  }
-
-  unsigned long start = millis();
-  unsigned long lastSonarCheck = 0;
-
-  while (millis() - start < (unsigned long)duration) {
-    // Collision avoidance safety guard during forward path movement
-    if (direction == 'F' && millis() - lastSonarCheck >= 80) {
-      lastSonarCheck = millis();
-      uint16_t dist = distanceCM();
-      if (dist > 0 && dist <= SAFE_DISTANCE) {
-        stopMotors();
-        BT.print(F("PATH_OBSTACLE:"));
-        BT.println(dist);
-        Serial.print(F("PATH_OBSTACLE:"));
-        Serial.println(dist);
-        mode = MANUAL;
-        return;
-      }
-    }
-
-    if (BT.available()) {
-      String cmd = BT.readStringUntil('\n');
-      cmd.trim();
-      if (cmd.length() > 0) {
-        handleCommand(cmd);
-        if (mode != PATH) {
-          stopMotors();
-          return;
-        }
-      }
-    }
-    if (Serial.available()) {
-      String cmd = Serial.readStringUntil('\n');
-      cmd.trim();
-      if (cmd.length() > 0) {
-        handleCommand(cmd);
-        if (mode != PATH) {
-          stopMotors();
-          return;
-        }
-      }
-    }
-  }
-
-  stopMotors();
-  delay(120); // 120ms settling pause between steps to eliminate slip & back-EMF
 }

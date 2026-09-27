@@ -19,7 +19,8 @@ import java.util.List;
 /**
  * Technical Blueprint Canvas for Autonomous Rover Path Planning.
  * Highly optimized: zero onDraw allocations, pre-compiled grid path,
- * smooth quadratic Bezier splines, adaptive resolution, and space-calibrated timing.
+ * smooth quadratic Bezier splines, adaptive resolution, real-time live waypoint tracking,
+ * and space-calibrated timing.
  */
 public class PathDrawingView extends View {
 
@@ -35,6 +36,11 @@ public class PathDrawingView extends View {
 
     private PathListener listener;
     private SpaceMode spaceMode = SpaceMode.TINY_DESK;
+
+    // Real-time telemetry tracking state
+    private int activeStep = -1;
+    private boolean isPathCompleted = false;
+    private int blockedStep = -1;
 
     private final Path drawPath = new Path();
     private final Path gridPath = new Path();
@@ -54,6 +60,14 @@ public class PathDrawingView extends View {
     private final Paint waypointRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint waypointTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    // Live Execution Highlight Paints
+    private final Paint activeWaypointPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint activeRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint blockedWaypointPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint blockedRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint completedPathPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint completedGlowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     // Cached dimensional metrics
     private float cachedGridSize;
@@ -106,7 +120,7 @@ public class PathDrawingView extends View {
         cachedLabelOffset = cachedMarkerRadius + dpToPx(5.5f);
         cachedWaypointRadius = dpToPx(6.5f);
         cachedTurnRadius = dpToPx(8.5f);
-        cachedMinMoveDist = dpToPx(4); // Finer sampling during motion
+        cachedMinMoveDist = dpToPx(4);
 
         // Blueprint dashed grid lines
         gridPaint.setColor(Color.parseColor("#E2E8F0"));
@@ -127,6 +141,19 @@ public class PathDrawingView extends View {
         pathPaint.setStrokeWidth(dpToPx(4f));
         pathPaint.setStrokeCap(Paint.Cap.ROUND);
         pathPaint.setStrokeJoin(Paint.Join.ROUND);
+
+        // Completed trajectory styling (Emerald Green)
+        completedPathPaint.setColor(Color.parseColor("#10B981"));
+        completedPathPaint.setStyle(Paint.Style.STROKE);
+        completedPathPaint.setStrokeWidth(dpToPx(4.5f));
+        completedPathPaint.setStrokeCap(Paint.Cap.ROUND);
+        completedPathPaint.setStrokeJoin(Paint.Join.ROUND);
+
+        completedGlowPaint.setColor(Color.parseColor("#4410B981"));
+        completedGlowPaint.setStyle(Paint.Style.STROKE);
+        completedGlowPaint.setStrokeWidth(dpToPx(12f));
+        completedGlowPaint.setStrokeCap(Paint.Cap.ROUND);
+        completedGlowPaint.setStrokeJoin(Paint.Join.ROUND);
 
         // Start marker (Emerald green)
         startPaint.setColor(Color.parseColor("#10B981"));
@@ -155,6 +182,22 @@ public class PathDrawingView extends View {
         waypointRingPaint.setColor(Color.parseColor("#400284C7"));
         waypointRingPaint.setStyle(Paint.Style.STROKE);
         waypointRingPaint.setStrokeWidth(dpToPx(2.5f));
+
+        // Active Step Beacon (Emerald pulse)
+        activeWaypointPaint.setColor(Color.parseColor("#10B981"));
+        activeWaypointPaint.setStyle(Paint.Style.FILL);
+
+        activeRingPaint.setColor(Color.parseColor("#6610B981"));
+        activeRingPaint.setStyle(Paint.Style.STROKE);
+        activeRingPaint.setStrokeWidth(dpToPx(4.5f));
+
+        // Blocked Step Beacon (Crimson alert)
+        blockedWaypointPaint.setColor(Color.parseColor("#EF4444"));
+        blockedWaypointPaint.setStyle(Paint.Style.FILL);
+
+        blockedRingPaint.setColor(Color.parseColor("#66EF4444"));
+        blockedRingPaint.setStyle(Paint.Style.STROKE);
+        blockedRingPaint.setStrokeWidth(dpToPx(4.5f));
 
         waypointTextPaint.setColor(Color.WHITE);
         waypointTextPaint.setTextSize(dpToPx(9f));
@@ -185,10 +228,46 @@ public class PathDrawingView extends View {
         return spaceMode;
     }
 
+    // Live Execution Tracking API
+    public void setActiveStep(int stepIndex) {
+        this.activeStep = stepIndex;
+        this.isPathCompleted = false;
+        this.blockedStep = -1;
+        invalidate();
+    }
+
+    public void advanceActiveStep() {
+        this.activeStep++;
+        this.isPathCompleted = false;
+        this.blockedStep = -1;
+        invalidate();
+    }
+
+    public void setPathCompleted(boolean completed) {
+        this.isPathCompleted = completed;
+        this.activeStep = -1;
+        this.blockedStep = -1;
+        invalidate();
+    }
+
+    public void setStepBlockedCurrent() {
+        this.blockedStep = Math.max(0, this.activeStep);
+        this.isPathCompleted = false;
+        invalidate();
+    }
+
+    public void resetExecutionState() {
+        this.activeStep = -1;
+        this.isPathCompleted = false;
+        this.blockedStep = -1;
+        invalidate();
+    }
+
     public void clearPath() {
         rawPoints.clear();
         waypointMarkers.clear();
         drawPath.reset();
+        resetExecutionState();
         invalidate();
         if (listener != null) {
             listener.onPathCleared();
@@ -197,6 +276,14 @@ public class PathDrawingView extends View {
 
     public boolean hasPath() {
         return rawPoints.size() >= 2;
+    }
+
+    public int getActiveStep() {
+        return activeStep;
+    }
+
+    public int getWaypointCount() {
+        return waypointMarkers.size();
     }
 
     @Override
@@ -220,18 +307,39 @@ public class PathDrawingView extends View {
         // 1. Coordinate grid
         canvas.drawPath(gridPath, gridPaint);
 
-        // 2. Trajectory glow + core path
-        canvas.drawPath(drawPath, pathGlowPaint);
-        canvas.drawPath(drawPath, pathPaint);
+        // 2. Trajectory line with mode-aware coloring
+        if (isPathCompleted) {
+            canvas.drawPath(drawPath, completedGlowPaint);
+            canvas.drawPath(drawPath, completedPathPaint);
+        } else {
+            canvas.drawPath(drawPath, pathGlowPaint);
+            canvas.drawPath(drawPath, pathPaint);
+        }
 
-        // 3. Intermediate checkpoint waypoints
+        // 3. Intermediate checkpoint waypoints with real-time execution feedback
         for (int i = 0; i < waypointMarkers.size(); i++) {
             Waypoint wp = waypointMarkers.get(i);
             float radius = wp.isTurn ? cachedTurnRadius : cachedWaypointRadius;
-            Paint bgPaint = wp.isTurn ? waypointTurnPaint : waypointStraightPaint;
 
-            canvas.drawCircle(wp.x, wp.y, radius + dpToPx(2f), waypointRingPaint);
-            canvas.drawCircle(wp.x, wp.y, radius, bgPaint);
+            if (i == blockedStep) {
+                // Blocked node
+                canvas.drawCircle(wp.x, wp.y, radius + dpToPx(5f), blockedRingPaint);
+                canvas.drawCircle(wp.x, wp.y, radius + dpToPx(1.5f), blockedWaypointPaint);
+            } else if (i == activeStep) {
+                // Live active executing node
+                canvas.drawCircle(wp.x, wp.y, radius + dpToPx(5f), activeRingPaint);
+                canvas.drawCircle(wp.x, wp.y, radius + dpToPx(1.5f), activeWaypointPaint);
+            } else if (isPathCompleted) {
+                // Completed mission node
+                canvas.drawCircle(wp.x, wp.y, radius + dpToPx(2f), activeRingPaint);
+                canvas.drawCircle(wp.x, wp.y, radius, activeWaypointPaint);
+            } else {
+                // Standard standby milestone node
+                Paint bgPaint = wp.isTurn ? waypointTurnPaint : waypointStraightPaint;
+                canvas.drawCircle(wp.x, wp.y, radius + dpToPx(2f), waypointRingPaint);
+                canvas.drawCircle(wp.x, wp.y, radius, bgPaint);
+            }
+
             canvas.drawText(wp.label, wp.x, wp.y - textVerticalOffset, waypointTextPaint);
         }
 
@@ -244,9 +352,9 @@ public class PathDrawingView extends View {
 
             if (rawPoints.size() > 1) {
                 PointF end = rawPoints.get(rawPoints.size() - 1);
-                canvas.drawCircle(end.x, end.y, cachedRingRadius, endRingPaint);
-                canvas.drawCircle(end.x, end.y, cachedMarkerRadius, endPaint);
-                canvas.drawText("FINISH", end.x, end.y - cachedLabelOffset, labelPaint);
+                canvas.drawCircle(end.x, end.y, cachedRingRadius, isPathCompleted ? activeRingPaint : endRingPaint);
+                canvas.drawCircle(end.x, end.y, cachedMarkerRadius, isPathCompleted ? activeWaypointPaint : endPaint);
+                canvas.drawText(isPathCompleted ? "COMPLETE" : "FINISH", end.x, end.y - cachedLabelOffset, labelPaint);
             }
         }
     }
@@ -265,6 +373,7 @@ public class PathDrawingView extends View {
                 lastX = x;
                 lastY = y;
                 rawPoints.add(new PointF(x, y));
+                resetExecutionState();
                 invalidate();
                 return true;
 

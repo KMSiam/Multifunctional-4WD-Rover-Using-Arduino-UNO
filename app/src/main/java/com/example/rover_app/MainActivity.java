@@ -486,25 +486,38 @@ public class MainActivity extends AppCompatActivity {
         });
 
         btnSendPath.setOnClickListener(v -> {
-            String pathCmd = tvPathPreview.getText().toString().trim();
-            if (pathCmd.startsWith("F:") && pathCmd.contains("S")) {
-                if (tvPathStatusBadge != null) {
-                    tvPathStatusBadge.setText("TRANSMITTING");
-                    tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connecting));
-                }
-                sendRoverCommand("P");
-
-                mainHandler.postDelayed(() -> {
-                    sendRoverCommand(pathCmd);
-                    if (tvPathStatusBadge != null) {
-                        tvPathStatusBadge.setText("EXECUTING");
-                        tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary));
-                    }
-                    Toast.makeText(this, "🚀 Path transmitted to rover!", Toast.LENGTH_SHORT).show();
-                }, 150);
-            } else {
-                Toast.makeText(this, "Draw a valid path on canvas first", Toast.LENGTH_SHORT).show();
+            if (!pathDrawingView.hasPath()) {
+                Toast.makeText(this, "Draw a valid path on the canvas first", Toast.LENGTH_SHORT).show();
+                return;
             }
+
+            String pathCmd = pathDrawingView.generateRoverCommand();
+            if (TextUtils.isEmpty(pathCmd) || pathCmd.equals("S") || !pathCmd.contains(":") || !pathCmd.contains("S")) {
+                Toast.makeText(this, "Draw a valid path with movement steps first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            tvPathPreview.setText(pathCmd);
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("TRANSMITTING");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connecting));
+            }
+
+            // Reset visual execution state before starting
+            pathDrawingView.resetExecutionState();
+
+            // 1. Send Mode P to clear rover queue and enter Path Mode
+            sendRoverCommand("P");
+
+            // 2. Transmit compiled path string after 180ms settling window
+            mainHandler.postDelayed(() -> {
+                sendRoverCommand(pathCmd);
+                if (tvPathStatusBadge != null) {
+                    tvPathStatusBadge.setText("EXECUTING");
+                    tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary));
+                }
+                Toast.makeText(this, "🚀 Path transmitted to rover!", Toast.LENGTH_SHORT).show();
+            }, 180);
         });
 
         btnPathStop.setOnClickListener(v -> triggerEmergencyStop());
@@ -536,7 +549,7 @@ public class MainActivity extends AppCompatActivity {
     private void triggerEmergencyStop() {
         sendRoverCommand("S", true);
         if (tvObstacleStatus != null && currentMode == RoverMode.OBSTACLE) {
-            tvObstacleStatus.setText("■ EMERGENCY STOP (Braked)");
+            tvObstacleStatus.setText("🛑 EMERGENCY STOP (Braked)");
             tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.danger));
         }
         if (tvObstacleSubtext != null && currentMode == RoverMode.OBSTACLE) {
@@ -549,14 +562,12 @@ public class MainActivity extends AppCompatActivity {
             tvPathStatusBadge.setText("HALTED");
             tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.danger));
         }
-        Toast.makeText(this, "■ EMERGENCY STOP ACTIVATED", Toast.LENGTH_SHORT).show();
+        if (pathDrawingView != null) {
+            pathDrawingView.resetExecutionState();
+        }
+        Toast.makeText(this, "🛑 EMERGENCY STOP ACTIVATED", Toast.LENGTH_SHORT).show();
     }
 
-    /**
-     * Switch Rover Mode safely:
-     * 1. If tapping the current mode tab, re-transmits mode command (robust recovery).
-     * 2. If switching modes: sends S\n burst, waits 220ms for settling, then sends target mode.
-     */
     private void switchMode(RoverMode targetMode) {
         boolean wasSameMode = (targetMode == currentMode);
         currentMode = targetMode;
@@ -580,6 +591,9 @@ public class MainActivity extends AppCompatActivity {
         }
 
         sendRoverCommand("S", true);
+        if (targetMode != RoverMode.PATH && pathDrawingView != null) {
+            pathDrawingView.resetExecutionState();
+        }
 
         mainHandler.postDelayed(() -> {
             switch (targetMode) {
@@ -1120,35 +1134,103 @@ public class MainActivity extends AppCompatActivity {
     private void processTelemetryLine(String line) {
         String upper = line.toUpperCase(Locale.ROOT);
 
-        if (upper.contains("OBSTACLE")) {
+        // 1. PATH TELEMETRY (Check PATH_OBSTACLE first to avoid being swallowed by OBSTACLE)
+        if (upper.startsWith("PATH_OBSTACLE")) {
+            int obstacleDist = 25;
+            int colonIdx = line.indexOf(':');
+            if (colonIdx != -1) {
+                try {
+                    obstacleDist = Integer.parseInt(line.substring(colonIdx + 1).trim());
+                } catch (NumberFormatException ignored) {}
+            }
+            if (pathDrawingView != null) {
+                pathDrawingView.setStepBlockedCurrent();
+            }
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("BLOCKED (" + obstacleDist + "cm)");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.danger));
+            }
+            if (tvPathPreview != null) {
+                tvPathPreview.setText("⚠️ Path aborted: Obstacle detected at " + obstacleDist + "cm!");
+            }
+            Toast.makeText(this, "⚠️ Obstacle detected (" + obstacleDist + "cm)! Rover stopped safely.", Toast.LENGTH_LONG).show();
+        } else if (upper.contains("PATH_START")) {
+            if (pathDrawingView != null) {
+                pathDrawingView.resetExecutionState();
+            }
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("RUNNING");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
+            }
+        } else if (upper.startsWith("PATH_STEP:")) {
+            String stepInfo = line.substring(10).trim();
+            if (pathDrawingView != null) {
+                pathDrawingView.advanceActiveStep();
+            }
+            int stepNum = (pathDrawingView != null) ? (pathDrawingView.getActiveStep() + 1) : 1;
+            int totalSteps = (pathDrawingView != null) ? pathDrawingView.getWaypointCount() : 0;
+            String badgeText = (totalSteps > 0)
+                    ? ("STEP " + stepNum + "/" + totalSteps + " (" + stepInfo + ")")
+                    : ("STEP: " + stepInfo);
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText(badgeText);
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary));
+            }
+        } else if (upper.contains("PATH_COMPLETE")) {
+            if (pathDrawingView != null) {
+                pathDrawingView.setPathCompleted(true);
+            }
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("COMPLETED");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
+            }
+            if (tvPathPreview != null) {
+                tvPathPreview.setText("🎉 Path finished executing successfully!");
+            }
+            Toast.makeText(this, "🎉 Path Execution Complete!", Toast.LENGTH_SHORT).show();
+        } else if (upper.contains("PATH_QUEUE_FULL")) {
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("QUEUE FULL");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.warning));
+            }
+            Toast.makeText(this, "⚠️ Rover path queue is full (Max 80 steps)", Toast.LENGTH_SHORT).show();
+        } else if (upper.contains("PATH_EMPTY")) {
+            if (tvPathStatusBadge != null) {
+                tvPathStatusBadge.setText("EMPTY PATH");
+                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
+            }
+            Toast.makeText(this, "No valid steps in path!", Toast.LENGTH_SHORT).show();
+        }
+        // 2. OBSTACLE AVOIDANCE TELEMETRY
+        else if (upper.equals("OBSTACLE") || (!upper.startsWith("PATH_") && upper.contains("OBSTACLE"))) {
             if (tvObstacleStatus != null) {
                 tvObstacleStatus.setText("⚠️ Obstacle Detected! Sweeping Left/Right...");
                 tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.warning));
             }
             if (tvObstacleSubtext != null) {
-                tvObstacleSubtext.setText("Ultrasonic < 15cm • Servo scanning Left (150°) & Right (30°)");
+                tvObstacleSubtext.setText("Ultrasonic < 25cm • Servo scanning Left (150°) & Right (30°)");
             }
             if (tvObstacleBadge != null) {
                 tvObstacleBadge.setText("AVOIDING");
             }
         } else if (upper.contains("TURN_LEFT")) {
             if (tvObstacleStatus != null) {
-                tvObstacleStatus.setText("◄ Left Path Clear — Turning Left (600ms)");
+                tvObstacleStatus.setText("◀ Left Path Clear • Turning Left (450ms)");
                 tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.accent));
             }
             if (tvObstacleSubtext != null) {
-                tvObstacleSubtext.setText("Left clearance > Right clearance (>15cm) • Executing turn");
+                tvObstacleSubtext.setText("Left clearance > Right clearance (>25cm) • Executing turn");
             }
             if (tvObstacleBadge != null) {
                 tvObstacleBadge.setText("TURNING");
             }
         } else if (upper.contains("TURN_RIGHT")) {
             if (tvObstacleStatus != null) {
-                tvObstacleStatus.setText("► Right Path Clear — Turning Right (600ms)");
+                tvObstacleStatus.setText("▶ Right Path Clear • Turning Right (450ms)");
                 tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.accent));
             }
             if (tvObstacleSubtext != null) {
-                tvObstacleSubtext.setText("Right clearance > 15cm • Executing turn");
+                tvObstacleSubtext.setText("Right clearance > 25cm • Executing turn");
             }
             if (tvObstacleBadge != null) {
                 tvObstacleBadge.setText("TURNING");
@@ -1159,61 +1241,36 @@ public class MainActivity extends AppCompatActivity {
                 tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.danger));
             }
             if (tvObstacleSubtext != null) {
-                tvObstacleSubtext.setText("Back 500ms + Turn Right 900ms to escape dead-end");
+                tvObstacleSubtext.setText("Back 350ms + Turn Right 700ms to escape dead-end");
             }
             if (tvObstacleBadge != null) {
                 tvObstacleBadge.setText("BLOCKED");
             }
         } else if (upper.contains("MODE:OBSTACLE")) {
             if (tvObstacleStatus != null) {
-                tvObstacleStatus.setText("● Forward Path Clear — Navigating");
+                tvObstacleStatus.setText("✔ Forward Path Clear • Navigating");
                 tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
             }
             if (tvObstacleSubtext != null) {
-                tvObstacleSubtext.setText("Threshold: 15cm • HC-SR04 Active • Center (90°)");
+                tvObstacleSubtext.setText("Safe Distance: 25cm • HC-SR04 Active • Center (90°)");
             }
             if (tvObstacleBadge != null) {
                 tvObstacleBadge.setText("ACTIVE");
             }
         } else if (upper.contains("ROVER_READY")) {
             if (tvObstacleStatus != null && currentMode == RoverMode.OBSTACLE) {
-                tvObstacleStatus.setText("● Rover Ready & Online");
+                tvObstacleStatus.setText("✔ Rover Ready & Online");
                 tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
             }
         } else if (upper.contains("STOP")) {
             if (currentMode == RoverMode.OBSTACLE) {
                 if (tvObstacleStatus != null) {
-                    tvObstacleStatus.setText("■ Rover Stopped");
+                    tvObstacleStatus.setText("⏹ Rover Stopped");
                     tvObstacleStatus.setTextColor(ContextCompat.getColor(this, R.color.danger));
                 }
                 if (tvObstacleBadge != null) {
                     tvObstacleBadge.setText("STOPPED");
                 }
-            }
-        } else if (upper.startsWith("PATH_STEP:")) {
-            String stepInfo = line.substring(10).trim();
-            if (tvPathStatusBadge != null) {
-                tvPathStatusBadge.setText("STEP: " + stepInfo);
-                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.primary));
-            }
-        } else if (upper.contains("PATH_COMPLETE")) {
-            if (tvPathStatusBadge != null) {
-                tvPathStatusBadge.setText("COMPLETED");
-                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.status_connected));
-            }
-            Toast.makeText(this, "✅ Path Execution Complete!", Toast.LENGTH_SHORT).show();
-            if (tvPathPreview != null) {
-                tvPathPreview.setText("✅ Path finished executing successfully!");
-            }
-        } else if (upper.startsWith("PATH_OBSTACLE")) {
-            if (tvPathStatusBadge != null) {
-                tvPathStatusBadge.setText("BLOCKED");
-                tvPathStatusBadge.setTextColor(ContextCompat.getColor(this, R.color.danger));
-            }
-            Toast.makeText(this, "⚠️ Obstacle detected! Rover stopped safely.", Toast.LENGTH_LONG).show();
-            Toast.makeText(this, "✓ Path Execution Complete!", Toast.LENGTH_SHORT).show();
-            if (tvPathPreview != null) {
-                tvPathPreview.setText("✓ Path finished executing by rover!");
             }
         }
 
@@ -1225,7 +1282,7 @@ public class MainActivity extends AppCompatActivity {
                     int dist = Integer.parseInt(numStr);
                     if (dist > 0 && dist < 450) {
                         if (tvObstacleSubtext != null && currentMode == RoverMode.OBSTACLE) {
-                            tvObstacleSubtext.setText("Live Distance: " + dist + " cm • Threshold: 15cm");
+                            tvObstacleSubtext.setText("Live Distance: " + dist + " cm • Safe Distance: 25cm");
                         }
                     }
                 }
