@@ -60,6 +60,20 @@ void printManualStop() {
   Serial.println(F("_STOP"));
 }
 
+// Explicit forward declarations (guarantees zero compiler scope errors in any IDE version)
+void stopMotors();
+void forward();
+void backward();
+void turnLeft();
+void turnRight();
+void setMotors(uint8_t a, uint8_t b, uint8_t c, uint8_t d);
+uint16_t distanceCM();
+void obstacleMode();
+void executePath(const String& path);
+void executeStep(const String& command);
+void handleCommand(const String& cmd);
+bool smartDelay(unsigned long ms);
+
 void setup() {
   Serial.begin(9600);
   BT.begin(9600);
