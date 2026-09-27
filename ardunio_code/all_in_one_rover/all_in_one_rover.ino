@@ -31,7 +31,7 @@ uint8_t leftSpeed = 160;
 uint8_t rightSpeed = 160;
 
 // Autonomous navigation thresholds & angles
-const uint8_t SAFE_DISTANCE = 15;
+const uint8_t SAFE_DISTANCE = 25;
 const uint8_t CENTER = 90;
 const uint8_t LEFT_ANGLE = 150;
 const uint8_t RIGHT_ANGLE = 30;
@@ -274,6 +274,7 @@ void handleCommand(const String& cmd) {
 }
 
 void setMotors(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+  // Check if motors were completely stopped
   bool wasStopped = (digitalRead(IN1) == LOW && digitalRead(IN2) == LOW && 
                      digitalRead(IN3) == LOW && digitalRead(IN4) == LOW);
 
@@ -282,11 +283,21 @@ void setMotors(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   digitalWrite(IN3, c);
   digitalWrite(IN4, d);
 
-  // If starting from standstill, provide a quick 35ms kick-pulse to overcome gearbox stiction
-  if (wasStopped && (leftSpeed < 180 || rightSpeed < 180)) {
-    analogWrite(ENA, (leftSpeed > 210 ? leftSpeed : 210));
-    analogWrite(ENB, (rightSpeed > 210 ? rightSpeed : 210));
-    delay(35);
+  // Soft-start ramp from standstill: prevents massive 5A inrush current spikes
+  // that collapse thin Dupont wires, drop battery voltage, and cause servo jitter
+  if (wasStopped && leftSpeed > 0 && rightSpeed > 0) {
+    uint8_t step1_L = leftSpeed / 3;
+    uint8_t step1_R = rightSpeed / 3;
+    uint8_t step2_L = (leftSpeed * 2) / 3;
+    uint8_t step2_R = (rightSpeed * 2) / 3;
+
+    analogWrite(ENA, step1_L > 40 ? step1_L : 40);
+    analogWrite(ENB, step1_R > 40 ? step1_R : 40);
+    delay(12);
+
+    analogWrite(ENA, step2_L > 80 ? step2_L : 80);
+    analogWrite(ENB, step2_R > 80 ? step2_R : 80);
+    delay(12);
   }
 
   analogWrite(ENA, leftSpeed);
@@ -299,13 +310,15 @@ void turnLeft()  { setMotors(LOW, HIGH, HIGH, LOW); }
 void turnRight() { setMotors(HIGH, LOW, LOW, HIGH); }
 
 void stopMotors() {
+  // Graceful braking: cut PWM first to damp inductive surge, then clear direction pins
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  delayMicroseconds(50);
+
   digitalWrite(IN1, LOW);
   digitalWrite(IN2, LOW);
   digitalWrite(IN3, LOW);
   digitalWrite(IN4, LOW);
-
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
 }
 
 uint16_t distanceCM() {
