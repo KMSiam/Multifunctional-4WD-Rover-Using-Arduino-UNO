@@ -63,7 +63,7 @@ void printManualStop() {
 void setup() {
   Serial.begin(9600);
   BT.begin(9600);
-  BT.setTimeout(30);
+  BT.setTimeout(80); // Generous timeout for multi-step path commands
 
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);

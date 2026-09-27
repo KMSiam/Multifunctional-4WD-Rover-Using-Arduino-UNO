@@ -19,9 +19,14 @@ import java.util.List;
 /**
  * Technical Blueprint Canvas for Autonomous Rover Path Planning.
  * Highly optimized: zero onDraw allocations, pre-compiled grid path,
- * smooth quadratic Bezier splines, and SoftwareSerial buffer-safe command compression.
+ * smooth quadratic Bezier splines, adaptive resolution, and space-calibrated timing.
  */
 public class PathDrawingView extends View {
+
+    public enum SpaceMode {
+        TINY_DESK,      // High precision, micro steps (120-380ms) for small rooms/desks
+        STANDARD_FLOOR  // Normal steps (200-900ms) for open floor areas
+    }
 
     public interface PathListener {
         void onPathDrawn(String generatedCommand, int stepCount, long totalDurationMs);
@@ -29,6 +34,7 @@ public class PathDrawingView extends View {
     }
 
     private PathListener listener;
+    private SpaceMode spaceMode = SpaceMode.TINY_DESK;
 
     private final Path drawPath = new Path();
     private final Path gridPath = new Path();
@@ -43,16 +49,19 @@ public class PathDrawingView extends View {
     private final Paint startRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint endPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint endRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint waypointPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint waypointTurnPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint waypointStraightPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint waypointRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint waypointTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
-    // Cached dimensional metrics (calculated once in init)
+    // Cached dimensional metrics
     private float cachedGridSize;
     private float cachedMarkerRadius;
     private float cachedRingRadius;
     private float cachedLabelOffset;
     private float cachedWaypointRadius;
+    private float cachedTurnRadius;
     private float cachedMinMoveDist;
     private float textVerticalOffset;
 
@@ -64,12 +73,14 @@ public class PathDrawingView extends View {
         public final float y;
         public final int stepIndex;
         public final String label;
+        public final boolean isTurn;
 
-        public Waypoint(float x, float y, int stepIndex, String label) {
+        public Waypoint(float x, float y, int stepIndex, String label, boolean isTurn) {
             this.x = x;
             this.y = y;
             this.stepIndex = stepIndex;
             this.label = label;
+            this.isTurn = isTurn;
         }
     }
 
@@ -93,8 +104,9 @@ public class PathDrawingView extends View {
         cachedMarkerRadius = dpToPx(11);
         cachedRingRadius = cachedMarkerRadius + dpToPx(3.5f);
         cachedLabelOffset = cachedMarkerRadius + dpToPx(5.5f);
-        cachedWaypointRadius = dpToPx(7.5f);
-        cachedMinMoveDist = dpToPx(6);
+        cachedWaypointRadius = dpToPx(6.5f);
+        cachedTurnRadius = dpToPx(8.5f);
+        cachedMinMoveDist = dpToPx(4); // Finer sampling during motion
 
         // Blueprint dashed grid lines
         gridPaint.setColor(Color.parseColor("#E2E8F0"));
@@ -112,7 +124,7 @@ public class PathDrawingView extends View {
         // Core trajectory line
         pathPaint.setColor(Color.parseColor("#2563EB"));
         pathPaint.setStyle(Paint.Style.STROKE);
-        pathPaint.setStrokeWidth(dpToPx(4.5f));
+        pathPaint.setStrokeWidth(dpToPx(4f));
         pathPaint.setStrokeCap(Paint.Cap.ROUND);
         pathPaint.setStrokeJoin(Paint.Join.ROUND);
 
@@ -132,12 +144,20 @@ public class PathDrawingView extends View {
         endRingPaint.setStyle(Paint.Style.STROKE);
         endRingPaint.setStrokeWidth(dpToPx(4f));
 
-        // Waypoint nodes (Amber)
-        waypointPaint.setColor(Color.parseColor("#F59E0B"));
-        waypointPaint.setStyle(Paint.Style.FILL);
+        // Waypoint turn nodes (Amber / Orange)
+        waypointTurnPaint.setColor(Color.parseColor("#F59E0B"));
+        waypointTurnPaint.setStyle(Paint.Style.FILL);
+
+        // Waypoint straight milestone nodes (Electric Cyan / Sky Blue)
+        waypointStraightPaint.setColor(Color.parseColor("#0284C7"));
+        waypointStraightPaint.setStyle(Paint.Style.FILL);
+
+        waypointRingPaint.setColor(Color.parseColor("#400284C7"));
+        waypointRingPaint.setStyle(Paint.Style.STROKE);
+        waypointRingPaint.setStrokeWidth(dpToPx(2.5f));
 
         waypointTextPaint.setColor(Color.WHITE);
-        waypointTextPaint.setTextSize(dpToPx(9.5f));
+        waypointTextPaint.setTextSize(dpToPx(9f));
         waypointTextPaint.setFakeBoldText(true);
         waypointTextPaint.setTextAlign(Paint.Align.CENTER);
         textVerticalOffset = (waypointTextPaint.descent() + waypointTextPaint.ascent()) / 2f;
@@ -151,6 +171,18 @@ public class PathDrawingView extends View {
 
     public void setPathListener(PathListener listener) {
         this.listener = listener;
+    }
+
+    public void setSpaceMode(SpaceMode mode) {
+        if (this.spaceMode != mode) {
+            this.spaceMode = mode;
+            buildWaypointsAndNotify();
+            invalidate();
+        }
+    }
+
+    public SpaceMode getSpaceMode() {
+        return spaceMode;
     }
 
     public void clearPath() {
@@ -170,7 +202,6 @@ public class PathDrawingView extends View {
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        // Pre-compile coordinate grid path once on resize to eliminate per-frame loop allocations
         gridPath.reset();
         for (float x = cachedGridSize; x < w; x += cachedGridSize) {
             gridPath.moveTo(x, 0);
@@ -186,21 +217,25 @@ public class PathDrawingView extends View {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        // 1. Draw pre-compiled coordinate grid in 1 single GPU draw call
+        // 1. Coordinate grid
         canvas.drawPath(gridPath, gridPaint);
 
-        // 2. Draw trajectory glow + core spline path
+        // 2. Trajectory glow + core path
         canvas.drawPath(drawPath, pathGlowPaint);
         canvas.drawPath(drawPath, pathPaint);
 
-        // 3. Draw intermediate waypoint markers
+        // 3. Intermediate checkpoint waypoints
         for (int i = 0; i < waypointMarkers.size(); i++) {
             Waypoint wp = waypointMarkers.get(i);
-            canvas.drawCircle(wp.x, wp.y, cachedWaypointRadius, waypointPaint);
-            canvas.drawText(String.valueOf(wp.stepIndex), wp.x, wp.y - textVerticalOffset, waypointTextPaint);
+            float radius = wp.isTurn ? cachedTurnRadius : cachedWaypointRadius;
+            Paint bgPaint = wp.isTurn ? waypointTurnPaint : waypointStraightPaint;
+
+            canvas.drawCircle(wp.x, wp.y, radius + dpToPx(2f), waypointRingPaint);
+            canvas.drawCircle(wp.x, wp.y, radius, bgPaint);
+            canvas.drawText(wp.label, wp.x, wp.y - textVerticalOffset, waypointTextPaint);
         }
 
-        // 4. Draw Start and End Markers
+        // 4. Start and End Markers
         if (!rawPoints.isEmpty()) {
             PointF start = rawPoints.get(0);
             canvas.drawCircle(start.x, start.y, cachedRingRadius, startRingPaint);
@@ -261,6 +296,11 @@ public class PathDrawingView extends View {
         return super.onTouchEvent(event);
     }
 
+    public void recalculate() {
+        buildWaypointsAndNotify();
+        invalidate();
+    }
+
     private void buildWaypointsAndNotify() {
         if (rawPoints.size() < 2) return;
 
@@ -275,12 +315,12 @@ public class PathDrawingView extends View {
         return (result != null) ? result.commandString : "S";
     }
 
-    private static class GeneratedPathResult {
-        final String commandString;
-        final int stepCount;
-        final long totalDurationMs;
+    public static class GeneratedPathResult {
+        public final String commandString;
+        public final int stepCount;
+        public final long totalDurationMs;
 
-        GeneratedPathResult(String commandString, int stepCount, long totalDurationMs) {
+        public GeneratedPathResult(String commandString, int stepCount, long totalDurationMs) {
             this.commandString = commandString;
             this.stepCount = stepCount;
             this.totalDurationMs = totalDurationMs;
@@ -294,8 +334,9 @@ public class PathDrawingView extends View {
 
         waypointMarkers.clear();
 
-        // 1. Simplify raw points using adaptive distance threshold (40dp)
-        float stepDist = dpToPx(40);
+        // 1. High precision adaptive distance threshold
+        // Tiny Desk mode uses 16dp for high waypoint density; Normal uses 26dp
+        float stepDist = (spaceMode == SpaceMode.TINY_DESK) ? dpToPx(16f) : dpToPx(26f);
         List<PointF> simplified = new ArrayList<>();
         simplified.add(rawPoints.get(0));
 
@@ -313,11 +354,12 @@ public class PathDrawingView extends View {
             simplified.add(rawPoints.get(rawPoints.size() - 1));
         }
 
-        // Limit maximum waypoints to 8 to fit within Arduino 64-byte serial buffer
-        if (simplified.size() > 8) {
+        // Limit maximum waypoints to 16 in Tiny mode (10 in Normal) to guarantee buffer safety
+        int maxWaypoints = (spaceMode == SpaceMode.TINY_DESK) ? 16 : 10;
+        if (simplified.size() > maxWaypoints) {
             List<PointF> reduced = new ArrayList<>();
             reduced.add(simplified.get(0));
-            int step = (int) Math.ceil((double) (simplified.size() - 1) / 7.0);
+            int step = (int) Math.ceil((double) (simplified.size() - 1) / (double) (maxWaypoints - 1));
             for (int i = step; i < simplified.size() - 1; i += step) {
                 reduced.add(simplified.get(i));
             }
@@ -340,7 +382,12 @@ public class PathDrawingView extends View {
         long t0 = calculateForwardTime(d0);
         stepList.add(new Step('F', t0));
 
-        int waypointCounter = 1;
+        int milestoneCounter = 1;
+        // Mark first point
+        waypointMarkers.add(new Waypoint(p1.x, p1.y, milestoneCounter++, "1", false));
+
+        double turnThreshold = (spaceMode == SpaceMode.TINY_DESK) ? 14.0 : 18.0;
+        long maxMergedForward = (spaceMode == SpaceMode.TINY_DESK) ? 380 : 900;
 
         for (int i = 1; i < simplified.size() - 1; i++) {
             PointF from = simplified.get(i);
@@ -352,22 +399,30 @@ public class PathDrawingView extends View {
             while (deltaAngle > 180) deltaAngle -= 360;
             while (deltaAngle < -180) deltaAngle += 360;
 
-            // Turn detection (threshold: 20 degrees)
-            if (Math.abs(deltaAngle) >= 20) {
-                long turnMs = Math.round(Math.abs(deltaAngle) * (550.0 / 90.0));
-                turnMs = Math.max(250, Math.min(1100, (turnMs / 50) * 50));
+            // Turn detection: sensitive threshold for tight curves
+            if (Math.abs(deltaAngle) >= turnThreshold) {
+                long turnMs = calculateTurnTime(deltaAngle);
                 char turnDir = (deltaAngle > 0) ? 'R' : 'L';
                 stepList.add(new Step(turnDir, turnMs));
                 currentHeading = targetHeading;
 
-                waypointMarkers.add(new Waypoint(from.x, from.y, waypointCounter++, String.valueOf(turnDir)));
+                waypointMarkers.add(new Waypoint(from.x, from.y, milestoneCounter++, String.valueOf(turnDir), true));
+            } else {
+                // Straight milestone point
+                waypointMarkers.add(new Waypoint(from.x, from.y, milestoneCounter++, String.valueOf(milestoneCounter - 1), false));
             }
 
             float segmentDist = (float) Math.hypot(to.x - from.x, to.y - from.y);
-            if (segmentDist >= dpToPx(10)) {
+            if (segmentDist >= dpToPx(6)) {
                 long forwardMs = calculateForwardTime(segmentDist);
                 if (!stepList.isEmpty() && stepList.get(stepList.size() - 1).dir == 'F') {
-                    stepList.get(stepList.size() - 1).duration += forwardMs;
+                    long merged = stepList.get(stepList.size() - 1).duration + forwardMs;
+                    if (merged <= maxMergedForward) {
+                        stepList.get(stepList.size() - 1).duration = merged;
+                    } else {
+                        // Split into separate short forward step to preserve tiny-space safety
+                        stepList.add(new Step('F', forwardMs));
+                    }
                 } else {
                     stepList.add(new Step('F', forwardMs));
                 }
@@ -382,7 +437,7 @@ public class PathDrawingView extends View {
             Step s = stepList.get(i);
             if (i > 0) sb.append(",");
             sb.append(s.dir).append(":").append(s.duration);
-            totalDurationMs += s.duration + 120; // Includes 120ms settling pause
+            totalDurationMs += s.duration + 100; // 100ms settling pause
         }
 
         if (sb.length() > 0) {
@@ -395,9 +450,30 @@ public class PathDrawingView extends View {
     }
 
     private long calculateForwardTime(float pixelDist) {
-        float msPerPixel = 5.0f;
-        long time = Math.round(pixelDist * msPerPixel);
-        return Math.max(350, Math.min(2200, (time / 50) * 50));
+        if (spaceMode == SpaceMode.TINY_DESK) {
+            // Short time sequences: 1.2ms/pixel, clamped strictly between 120ms and 380ms
+            float msPerPixel = 1.2f;
+            long time = Math.round(pixelDist * msPerPixel);
+            return Math.max(120, Math.min(380, (time / 10) * 10));
+        } else {
+            // Standard floor mode: 2.6ms/pixel, clamped between 200ms and 900ms
+            float msPerPixel = 2.6f;
+            long time = Math.round(pixelDist * msPerPixel);
+            return Math.max(200, Math.min(900, (time / 20) * 20));
+        }
+    }
+
+    private long calculateTurnTime(double deltaAngle) {
+        double deg = Math.abs(deltaAngle);
+        if (spaceMode == SpaceMode.TINY_DESK) {
+            // Calibrated for 12V rover in tiny space: 90 deg = ~230ms
+            long ms = Math.round(deg * (230.0 / 90.0));
+            return Math.max(90, Math.min(380, (ms / 10) * 10));
+        } else {
+            // Standard floor mode: 90 deg = ~360ms
+            long ms = Math.round(deg * (360.0 / 90.0));
+            return Math.max(160, Math.min(750, (ms / 20) * 20));
+        }
     }
 
     private float dpToPx(float dp) {

@@ -142,6 +142,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvPathMetrics;
     private TextView tvPathStatusBadge;
     private MaterialButton btnClearPath, btnGeneratePath, btnSendPath, btnPathStop;
+    private MaterialButton btnPathModeTiny, btnPathModeFloor;
 
     private View btnToggleConsole;
     private TextView tvConsoleHeader;
@@ -326,6 +327,8 @@ public class MainActivity extends AppCompatActivity {
         btnGeneratePath = findViewById(R.id.btn_generate_path);
         btnSendPath = findViewById(R.id.btn_send_path);
         btnPathStop = findViewById(R.id.btn_path_stop);
+        btnPathModeTiny = findViewById(R.id.btn_path_mode_tiny);
+        btnPathModeFloor = findViewById(R.id.btn_path_mode_floor);
 
         btnToggleConsole = findViewById(R.id.btn_toggle_console);
         tvConsoleHeader = findViewById(R.id.tv_console_header);
@@ -436,7 +439,9 @@ public class MainActivity extends AppCompatActivity {
             public void onPathDrawn(String generatedCommand, int stepCount, long totalDurationMs) {
                 tvPathPreview.setText(generatedCommand);
                 if (tvPathMetrics != null) {
-                    tvPathMetrics.setText(stepCount + " Steps • Est. " + String.format(Locale.US, "%.1fs", totalDurationMs / 1000.0f));
+                    boolean isTiny = (pathDrawingView != null && pathDrawingView.getSpaceMode() == PathDrawingView.SpaceMode.TINY_DESK);
+                    String modeTag = isTiny ? "Tiny Desk" : "Floor";
+                    tvPathMetrics.setText(stepCount + " Steps (" + modeTag + ") • Est. " + String.format(Locale.US, "%.1fs", totalDurationMs / 1000.0f));
                 }
                 if (tvPathStatusBadge != null) {
                     tvPathStatusBadge.setText("READY");
@@ -456,6 +461,13 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         });
+
+        if (btnPathModeTiny != null) {
+            btnPathModeTiny.setOnClickListener(v -> updatePathSpaceMode(PathDrawingView.SpaceMode.TINY_DESK));
+        }
+        if (btnPathModeFloor != null) {
+            btnPathModeFloor.setOnClickListener(v -> updatePathSpaceMode(PathDrawingView.SpaceMode.STANDARD_FLOOR));
+        }
 
         btnClearPath.setOnClickListener(v -> pathDrawingView.clearPath());
 
@@ -622,6 +634,31 @@ public class MainActivity extends AppCompatActivity {
         sbSpeed.setProgress(speed);
         tvSpeedValue.setText(speed + " / 255");
         sendRoverCommand("V:" + speed);
+    }
+
+    private void updatePathSpaceMode(PathDrawingView.SpaceMode mode) {
+        if (pathDrawingView == null) return;
+        pathDrawingView.setSpaceMode(mode);
+        boolean isTiny = (mode == PathDrawingView.SpaceMode.TINY_DESK);
+
+        int primaryColor = ContextCompat.getColor(this, R.color.primary);
+        int cardBgColor = ContextCompat.getColor(this, R.color.card_bg);
+        int whiteColor = ContextCompat.getColor(this, R.color.white);
+        int textSecColor = ContextCompat.getColor(this, R.color.text_secondary);
+        int borderColor = ContextCompat.getColor(this, R.color.border);
+
+        if (btnPathModeTiny != null) {
+            btnPathModeTiny.setBackgroundTintList(ColorStateList.valueOf(isTiny ? primaryColor : cardBgColor));
+            btnPathModeTiny.setTextColor(isTiny ? whiteColor : textSecColor);
+            btnPathModeTiny.setStrokeColor(ColorStateList.valueOf(isTiny ? primaryColor : borderColor));
+        }
+        if (btnPathModeFloor != null) {
+            btnPathModeFloor.setBackgroundTintList(ColorStateList.valueOf(!isTiny ? primaryColor : cardBgColor));
+            btnPathModeFloor.setTextColor(!isTiny ? whiteColor : textSecColor);
+            btnPathModeFloor.setStrokeColor(ColorStateList.valueOf(!isTiny ? primaryColor : borderColor));
+        }
+
+        Toast.makeText(this, isTiny ? "Tiny Space Mode: Micro-steps & tight turns active" : "Floor Mode: Standard steps active", Toast.LENGTH_SHORT).show();
     }
 
     private void toggleConsole() {
